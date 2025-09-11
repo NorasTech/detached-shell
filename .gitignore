@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug files
+*.pdb
+core
+
+# Session data (for development)
+/tmp/nds_sessions/
