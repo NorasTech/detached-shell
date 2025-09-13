@@ -188,7 +188,6 @@ mod tests {
         use crate::pty::client::*;
         use crate::pty::io_handler::*;
         use crate::pty::socket::*;
-        use crate::pty::terminal::*;
 
         #[test]
         fn test_parse_nds_command_empty() {

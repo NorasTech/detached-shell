@@ -24,6 +24,7 @@ fn test_socket_permissions() {
 }
 
 #[test]
+#[cfg(feature = "async")]
 fn test_input_sanitization() {
     use detached_shell::pty::socket_async::{is_valid_command, sanitize_string_input};
 
@@ -40,6 +41,7 @@ fn test_input_sanitization() {
 }
 
 #[test]
+#[cfg(feature = "async")]
 fn test_numeric_bounds() {
     use detached_shell::pty::socket_async::sanitize_numeric_input;
 
@@ -50,6 +52,7 @@ fn test_numeric_bounds() {
 }
 
 #[test]
+#[cfg(feature = "async")]
 fn test_command_length_limits() {
     use detached_shell::pty::socket_async::parse_nds_command_secure;
 

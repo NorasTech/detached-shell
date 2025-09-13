@@ -11,6 +11,7 @@ use crate::pty_buffer::PtyBuffer;
 
 /// Buffer size constants for improved performance
 pub const DEFAULT_BUFFER_SIZE: usize = 16384; // 16KB for better throughput
+#[allow(dead_code)]
 pub const SMALL_BUFFER_SIZE: usize = 4096; // 4KB for control messages
 
 /// Handle reading from PTY master and broadcasting to clients

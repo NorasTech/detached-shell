@@ -7,10 +7,13 @@ use crate::error::{NdsError, Result};
 use crate::session::Session;
 
 /// Buffer size constants for improved performance
+#[allow(dead_code)]
 pub const DEFAULT_BUFFER_SIZE: usize = 16384; // 16KB for better throughput
+#[allow(dead_code)]
 pub const SMALL_BUFFER_SIZE: usize = 4096; // 4KB for control messages
 
 /// Creates a Unix socket listener for a session with secure permissions
+#[allow(dead_code)]
 pub async fn create_listener_async(session_id: &str) -> Result<(UnixListener, PathBuf)> {
     let socket_path = Session::socket_dir()?.join(format!("{}.sock", session_id));
 
@@ -33,6 +36,7 @@ pub async fn create_listener_async(session_id: &str) -> Result<(UnixListener, Pa
 }
 
 /// Send a resize command to the daemon through the socket (async version)
+#[allow(dead_code)]
 pub async fn send_resize_command_async(
     socket: &mut UnixStream,
     cols: u16,
@@ -114,6 +118,7 @@ pub fn is_valid_command(cmd: &str) -> bool {
 }
 
 /// Get the end index of an NDS command in the data (with bounds checking)
+#[allow(dead_code)]
 pub fn get_command_end_secure(data: &[u8]) -> Option<usize> {
     if data.len() < 8192 && data.starts_with(b"\x1b]nds:") {
         if let Ok(cmd_str) = std::str::from_utf8(data) {

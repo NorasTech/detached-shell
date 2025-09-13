@@ -12,11 +12,13 @@ use crate::pty::socket_async::DEFAULT_BUFFER_SIZE;
 use crate::pty_buffer::PtyBuffer;
 
 /// Handle reading from PTY master and broadcasting to clients (async version)
+#[allow(dead_code)]
 pub struct AsyncPtyIoHandler {
     master_fd: RawFd,
     buffer_size: usize,
 }
 
+#[allow(dead_code)]
 impl AsyncPtyIoHandler {
     pub fn new(master_fd: RawFd) -> Self {
         Self {
@@ -67,11 +69,13 @@ impl AsyncPtyIoHandler {
 }
 
 /// Handle scrollback buffer management with thread-safe async operations
+#[allow(dead_code)]
 pub struct AsyncScrollbackHandler {
     buffer: Arc<RwLock<Vec<u8>>>,
     max_size: usize,
 }
 
+#[allow(dead_code)]
 impl AsyncScrollbackHandler {
     pub fn new(max_size: usize) -> Self {
         Self {
@@ -104,6 +108,7 @@ impl AsyncScrollbackHandler {
 }
 
 /// Async task that reads from socket and writes to stdout
+#[allow(dead_code)]
 pub async fn socket_to_stdout_task(
     mut socket: UnixStream,
     running: Arc<AtomicBool>,
@@ -158,6 +163,7 @@ pub async fn socket_to_stdout_task(
 }
 
 /// Async task that monitors terminal size changes
+#[allow(dead_code)]
 pub async fn resize_monitor_task(
     mut socket: UnixStream,
     running: Arc<AtomicBool>,
@@ -183,6 +189,7 @@ pub async fn resize_monitor_task(
 }
 
 /// Helper to send buffered output to a new client (async version)
+#[allow(dead_code)]
 pub async fn send_buffered_output_async(
     stream: &mut UnixStream,
     output_buffer: &PtyBuffer,
@@ -226,11 +233,13 @@ pub async fn send_buffered_output_async(
 }
 
 /// Session manager using Arc<RwLock> for multi-threaded access
+#[allow(dead_code)]
 pub struct AsyncSessionManager {
     sessions: Arc<RwLock<std::collections::HashMap<String, SessionData>>>,
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SessionData {
     pub id: String,
     pub master_fd: RawFd,
@@ -239,6 +248,7 @@ pub struct SessionData {
     pub created_at: std::time::SystemTime,
 }
 
+#[allow(dead_code)]
 impl AsyncSessionManager {
     pub fn new() -> Self {
         Self {
