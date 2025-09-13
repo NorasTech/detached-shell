@@ -17,8 +17,8 @@ Simple detachable shell sessions with zero configuration. Not a complex multiple
 - 🎯 **Simple Session Management**: Create, detach, and reattach shell sessions with ease
 - 🪶 **Lightweight**: < 1MB single binary with zero configuration required
 - ⚡ **Fast**: Written in Rust for maximum performance
-- 🎨 **User-Friendly**: Intuitive commands with partial ID matching
-- 🖥️ **Interactive Mode**: Visual session picker with arrow key navigation
+- 🎨 **User-Friendly**: Intuitive commands with partial ID and name matching
+- 🖥️ **Interactive Mode**: Sleek TUI session picker with real-time status
 - 📝 **Session History**: Track all session events with persistent history
 - 🧹 **Auto-Cleanup**: Automatic cleanup of dead sessions
 - 🔄 **Session Switching**: Simple attach/detach without complex multiplexing
@@ -92,15 +92,18 @@ nds new --no-attach
 nds list
 nds ls
 
-# Interactive session picker
-nds  # or nds list -i
+# Interactive session picker with TUI
+nds interactive  # or just 'nds' for short
 
-# Attach to a session (supports partial ID matching)
+# Attach to a session (supports partial ID and name matching)
 nds attach abc123
+nds attach project-dev  # attach by name
 nds a abc  # partial ID works
+nds a proj  # partial name works
 
-# Kill sessions
+# Kill sessions (supports ID and name)
 nds kill abc123
+nds kill project-dev  # kill by name
 nds kill abc def ghi  # kill multiple sessions
 
 # Clean up dead sessions
@@ -110,11 +113,13 @@ nds clean
 ### Session Information
 
 ```bash
-# Get detailed info about a session
+# Get detailed info about a session (supports ID and name)
 nds info abc123
+nds info project-dev  # info by name
 
-# Rename a session
+# Rename a session (supports ID and name)
 nds rename abc123 "new-name"
+nds rename project-dev "production"  # rename by current name
 
 # View session history
 nds history              # Active sessions only
@@ -125,6 +130,8 @@ nds history -s abc123    # History for specific session
 ### Keyboard Shortcuts (Inside Session)
 
 - `Enter, ~d` - Detach from current session (like SSH's `~.` sequence)
+- `Ctrl+D` - Detach from current session (when at empty prompt)
+- `Enter, ~s` - Switch to another session interactively
 
 ## 🏗️ Architecture
 
@@ -156,6 +163,10 @@ NDS works out of the box with zero configuration. However, you can customize:
 ```bash
 # Change default shell (default: $SHELL or /bin/sh)
 export NDS_SHELL=/bin/zsh
+
+# Session identification (automatically set inside sessions)
+NDS_SESSION_ID      # Current session ID when attached
+NDS_SESSION_NAME    # Current session name (if set)
 
 # Change detach key binding (coming soon)
 export NDS_DETACH_KEY="ctrl-a d"

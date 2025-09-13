@@ -10,7 +10,7 @@ use std::thread;
 use crossterm::terminal;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::signal::{kill, Signal};
-use nix::sys::termios::{tcgetattr, tcsetattr, SetArg};
+use nix::sys::termios::{tcflush, tcgetattr, tcsetattr, FlushArg, SetArg};
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
 use crate::error::{NdsError, Result};
@@ -19,6 +19,13 @@ use crate::pty_buffer::PtyBuffer;
 use crate::scrollback::ScrollbackViewer;
 use crate::session::Session;
 use crate::terminal_state::TerminalState;
+
+// Structure to track client information
+struct ClientInfo {
+    stream: UnixStream,
+    cols: u16,
+    rows: u16,
+}
 
 pub struct PtyProcess {
     pub master_fd: RawFd,
@@ -202,6 +209,14 @@ impl PtyProcess {
                     let _ = close(slave_fd);
                 }
 
+                // Set environment variables for session tracking
+                std::env::set_var("NDS_SESSION_ID", session_id);
+                if let Some(ref session_name) = name {
+                    std::env::set_var("NDS_SESSION_NAME", session_name);
+                } else {
+                    std::env::set_var("NDS_SESSION_NAME", session_id);
+                }
+                
                 // Get shell
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
@@ -260,6 +275,10 @@ impl PtyProcess {
     }
 
     pub fn attach_to_session(session: &Session) -> Result<Option<String>> {
+        // Set environment variable to track current attached session
+        std::env::set_var("NDS_SESSION_ID", &session.id);
+        std::env::set_var("NDS_SESSION_NAME", session.name.as_ref().unwrap_or(&session.id));
+        
         // Save current terminal state
         let stdin_fd = 0;
         let stdin = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
@@ -389,6 +408,14 @@ impl PtyProcess {
         });
 
         // Read from stdin and write to socket
+        let stdin_fd = 0i32;
+        
+        // Make stdin non-blocking
+        unsafe {
+            let flags = libc::fcntl(stdin_fd, libc::F_GETFL);
+            libc::fcntl(stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+        
         let mut stdin = io::stdin();
         let mut buffer = [0u8; 1024];
 
@@ -404,7 +431,13 @@ impl PtyProcess {
             }
 
             match stdin.read(&mut buffer) {
-                Ok(0) => break,
+                Ok(0) => {
+                    // EOF (Ctrl+D) - treat as detach, not session termination
+                    // Do NOT forward EOF to session as it would terminate the shell
+                    println!("\r\n[Detaching from session {}]\r", session.id);
+                    running.store(false, Ordering::SeqCst);
+                    break;
+                },
                 Ok(n) => {
                     let mut should_detach = false;
                     let mut should_switch = false;
@@ -423,6 +456,12 @@ impl PtyProcess {
                     // Process each byte for escape sequence
                     for i in 0..n {
                         let byte = buffer[i];
+
+                        // Check for Ctrl+D (ASCII 4) - detach this client only
+                        if byte == 0x04 {
+                            should_detach = true;
+                            break;
+                        }
 
                         match escape_state {
                             0 => {
@@ -476,6 +515,7 @@ impl PtyProcess {
 
                     if should_detach {
                         println!("\r\n[Detaching from session {}]\r", session.id);
+                        running.store(false, Ordering::SeqCst);
                         break;
                     }
 
@@ -511,9 +551,24 @@ impl PtyProcess {
                                 println!("\r\nSelect option (0-{}): ", new_option_num);
                                 let _ = io::stdout().flush();
 
+                                // Temporarily restore terminal to cooked mode for input
+                                let stdin_fd = 0;
+                                let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+                                
+                                // Save current raw mode settings
+                                let current_termios = tcgetattr(&stdin_borrowed)?;
+                                
+                                // Restore to original (cooked) mode for line input
+                                tcsetattr(&stdin_borrowed, SetArg::TCSANOW, &original_termios)?;
+                                
                                 // Read user selection
                                 let mut selection = String::new();
-                                if let Ok(_) = io::stdin().read_line(&mut selection) {
+                                let read_result = io::stdin().read_line(&mut selection);
+                                
+                                // Restore raw mode
+                                tcsetattr(&stdin_borrowed, SetArg::TCSANOW, &current_termios)?;
+                                
+                                if let Ok(_) = read_result {
                                     if let Ok(num) = selection.trim().parse::<usize>() {
                                         if num > 0 && num <= other_sessions.len() {
                                             // Switch to selected session
@@ -530,8 +585,23 @@ impl PtyProcess {
                                             println!("\r\nEnter name for new session (or press Enter for no name): ");
                                             let _ = io::stdout().flush();
 
+                                            // Temporarily restore terminal to cooked mode for input
+                                            let stdin_fd = 0;
+                                            let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+                                            
+                                            // Save current raw mode settings
+                                            let current_termios = tcgetattr(&stdin_borrowed)?;
+                                            
+                                            // Restore to original (cooked) mode for line input
+                                            tcsetattr(&stdin_borrowed, SetArg::TCSANOW, &original_termios)?;
+                                            
                                             let mut session_name = String::new();
-                                            if let Ok(_) = io::stdin().read_line(&mut session_name)
+                                            let read_result = io::stdin().read_line(&mut session_name);
+                                            
+                                            // Restore raw mode
+                                            tcsetattr(&stdin_borrowed, SetArg::TCSANOW, &current_termios)?;
+                                            
+                                            if let Ok(_) = read_result
                                             {
                                                 let session_name = session_name.trim();
                                                 let name = if session_name.is_empty() {
@@ -627,6 +697,14 @@ impl PtyProcess {
                         }
                     }
                 }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // No input available, check if we should exit
+                    if !running.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
                 Err(e) => {
                     eprintln!("\r\nError reading stdin: {}\r", e);
                     break;
@@ -637,32 +715,54 @@ impl PtyProcess {
         // Stop the socket reader thread
         running.store(false, Ordering::SeqCst);
 
-        // Close the socket to unblock the reader thread
+        // Shutdown and close the socket to immediately unblock the reader thread
+        let _ = socket.shutdown(std::net::Shutdown::Both);
         drop(socket);
 
-        // Wait for the thread with a timeout
-        thread::sleep(std::time::Duration::from_millis(100));
+        // Wait for the thread with a shorter timeout since we shutdown the socket
+        thread::sleep(std::time::Duration::from_millis(50));
         let _ = socket_to_stdout.join();
 
         // Restore terminal - do this BEFORE any output
         let stdin_fd = 0;
         let stdin = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
 
-        // First restore the terminal settings
+        // First restore stdin to blocking mode
+        unsafe {
+            let flags = libc::fcntl(stdin_fd, libc::F_GETFL);
+            libc::fcntl(stdin_fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+        }
+
+        // Clear any pending input from stdin buffer
+        tcflush(&stdin, FlushArg::TCIFLUSH)
+            .map_err(|e| NdsError::TerminalError(format!("Failed to flush stdin: {}", e)))?;
+
+        // Restore the terminal settings
         tcsetattr(&stdin, SetArg::TCSANOW, &original_termios)
             .map_err(|e| NdsError::TerminalError(format!("Failed to restore terminal: {}", e)))?;
 
         // Ensure we're back in cooked mode
         terminal::disable_raw_mode().ok();
 
+        // Clear any remaining input after terminal restore
+        tcflush(&stdin, FlushArg::TCIFLUSH)
+            .map_err(|e| NdsError::TerminalError(format!("Failed to flush stdin after restore: {}", e)))?;
+
         // Add a small delay to ensure terminal is fully restored
         thread::sleep(std::time::Duration::from_millis(50));
 
+        // Clear environment variables on detach
+        std::env::remove_var("NDS_SESSION_ID");
+        std::env::remove_var("NDS_SESSION_NAME");
+        
         // Now it's safe to print the detach message
         println!("\n[Detached from session {}]", session.id);
 
         // Flush stdout to ensure message is displayed
         let _ = io::stdout().flush();
+
+        // Clear any pending input from stdin to prevent hanging
+        tcflush(&stdin, nix::sys::termios::FlushArg::TCIFLUSH).ok();
 
         Ok(None)
     }
@@ -690,8 +790,8 @@ impl PtyProcess {
             .take()
             .ok_or_else(|| NdsError::PtyError("No output buffer available".to_string()))?;
 
-        // Support multiple concurrent clients
-        let mut active_clients: Vec<UnixStream> = Vec::new();
+        // Support multiple concurrent clients with their terminal sizes
+        let mut active_clients: Vec<ClientInfo> = Vec::new();
         let mut buffer = [0u8; 4096];
 
         // Get session ID from socket path
@@ -714,8 +814,8 @@ impl PtyProcess {
                         active_clients.len() + 1
                     );
                     for client in &mut active_clients {
-                        let _ = client.write_all(notification.as_bytes());
-                        let _ = client.flush();
+                        let _ = client.stream.write_all(notification.as_bytes());
+                        let _ = client.stream.flush();
                     }
 
                     // Send buffered output to new client
@@ -758,7 +858,11 @@ impl PtyProcess {
                     }
 
                     // Add new client to the list
-                    active_clients.push(stream);
+                    active_clients.push(ClientInfo {
+                        stream,
+                        cols: 80,
+                        rows: 24,
+                    });
 
                     // Update client count in status file
                     let _ = Session::update_client_count(&session_id, active_clients.len());
@@ -789,7 +893,7 @@ impl PtyProcess {
                         let mut disconnected_indices = Vec::new();
 
                         for (i, client) in active_clients.iter_mut().enumerate() {
-                            if let Err(e) = client.write_all(data) {
+                            if let Err(e) = client.stream.write_all(data) {
                                 if e.kind() == io::ErrorKind::BrokenPipe
                                     || e.kind() == io::ErrorKind::ConnectionAborted
                                 {
@@ -797,7 +901,7 @@ impl PtyProcess {
                                     disconnected_indices.push(i);
                                 }
                             } else {
-                                let _ = client.flush();
+                                let _ = client.stream.flush();
                             }
                         }
 
@@ -810,15 +914,28 @@ impl PtyProcess {
                             // Update client count in status file
                             let _ = Session::update_client_count(&session_id, active_clients.len());
 
-                            // Notify remaining clients
+                            // Notify remaining clients and refresh their terminals
                             if !active_clients.is_empty() {
                                 let notification = format!(
                                     "\r\n[A client disconnected (remaining: {})]\r\n",
                                     active_clients.len()
                                 );
+                                
+                                // Terminal refresh sequences
+                                let refresh_sequences = [
+                                    "\x1b[?25h",     // Show cursor
+                                    "\x1b[?12h",     // Enable cursor blinking
+                                    "\x1b[1 q",      // Blinking block cursor (default)
+                                    "\x1b[m",        // Reset all attributes
+                                    "\x1b[?1000l",   // Disable mouse tracking (if enabled)
+                                    "\x1b[?1002l",   // Disable cell motion mouse tracking
+                                    "\x1b[?1003l",   // Disable all motion mouse tracking
+                                ].join("");
+                                
                                 for client in &mut active_clients {
-                                    let _ = client.write_all(notification.as_bytes());
-                                    let _ = client.flush();
+                                    let _ = client.stream.write_all(notification.as_bytes());
+                                    let _ = client.stream.write_all(refresh_sequences.as_bytes());
+                                    let _ = client.stream.flush();
                                 }
                             }
                         }
@@ -845,7 +962,7 @@ impl PtyProcess {
 
             for (i, client) in active_clients.iter_mut().enumerate() {
                 let mut client_buffer = [0u8; 1024];
-                match client.read(&mut client_buffer) {
+                match client.stream.read(&mut client_buffer) {
                     Ok(0) => {
                         // Client disconnected
                         disconnected_indices.push(i);
@@ -867,7 +984,12 @@ impl PtyProcess {
                                             if let (Ok(cols), Ok(rows)) =
                                                 (parts[0].parse::<u16>(), parts[1].parse::<u16>())
                                             {
-                                                // Resize the PTY
+                                                // Update this client's terminal size
+                                                client.cols = cols;
+                                                client.rows = rows;
+                                                
+                                                // We'll resize after the loop to avoid borrow issues
+                                                // For now, just resize to the current client's size
                                                 unsafe {
                                                     let winsize = libc::winsize {
                                                         ws_row: rows,
@@ -930,15 +1052,48 @@ impl PtyProcess {
                 // Update client count in status file
                 let _ = Session::update_client_count(&session_id, active_clients.len());
 
-                // Notify remaining clients
+                // Notify remaining clients and resize to smallest
                 if !active_clients.is_empty() {
                     let notification = format!(
                         "\r\n[A client disconnected (remaining: {})]\r\n",
                         active_clients.len()
                     );
                     for client in &mut active_clients {
-                        let _ = client.write_all(notification.as_bytes());
-                        let _ = client.flush();
+                        let _ = client.stream.write_all(notification.as_bytes());
+                        let _ = client.stream.flush();
+                    }
+                    
+                    // Find the smallest terminal size among remaining clients
+                    let mut min_cols = u16::MAX;
+                    let mut min_rows = u16::MAX;
+                    for client in &active_clients {
+                        min_cols = min_cols.min(client.cols);
+                        min_rows = min_rows.min(client.rows);
+                    }
+                    
+                    // Resize the PTY to the smallest size
+                    if min_cols != u16::MAX && min_rows != u16::MAX {
+                        unsafe {
+                            let winsize = libc::winsize {
+                                ws_row: min_rows,
+                                ws_col: min_cols,
+                                ws_xpixel: 0,
+                                ws_ypixel: 0,
+                            };
+                            libc::ioctl(
+                                self.master_fd,
+                                libc::TIOCSWINSZ as u64,
+                                &winsize,
+                            );
+                        }
+                        
+                        // Send SIGWINCH to notify the shell
+                        let _ = kill(self.pid, Signal::SIGWINCH);
+                        
+                        // Send Ctrl+L to refresh the display
+                        let mut master_file = unsafe { File::from_raw_fd(self.master_fd) };
+                        let _ = master_file.write_all(b"\x0c");
+                        std::mem::forget(master_file);
                     }
                 }
             }
