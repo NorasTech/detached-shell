@@ -16,7 +16,7 @@ use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 use super::client::ClientInfo;
 use super::io_handler::{
     send_buffered_output, spawn_resize_monitor_thread, spawn_socket_to_stdout_thread, PtyIoHandler,
-    ScrollbackHandler,
+    ScrollbackHandler, DEFAULT_BUFFER_SIZE,
 };
 use super::session_switcher::{SessionSwitcher, SwitchResult};
 use super::socket::{create_listener, get_command_end, parse_nds_command, send_resize_command};
@@ -202,7 +202,7 @@ impl PtyProcess {
                     pid: child,
                     socket_path,
                     listener: Some(listener),
-                    output_buffer: Some(PtyBuffer::new(1024 * 1024)), // 1MB buffer
+                    output_buffer: Some(PtyBuffer::new(2 * 1024 * 1024)), // 2MB buffer for better performance
                 };
 
                 Ok((pty_process, session))
@@ -235,12 +235,17 @@ impl PtyProcess {
                     let _ = close(slave_fd);
                 }
 
-                // Set environment variables for session tracking
+                // Set environment variables for session tracking and isolation
                 std::env::set_var("NDS_SESSION_ID", session_id);
                 if let Some(ref session_name) = name {
                     std::env::set_var("NDS_SESSION_NAME", session_name);
                 } else {
                     std::env::set_var("NDS_SESSION_NAME", session_id);
+                }
+
+                // Set restrictive umask for session isolation
+                unsafe {
+                    libc::umask(0o077); // Only owner can read/write/execute new files
                 }
 
                 // Get shell
@@ -363,7 +368,7 @@ impl PtyProcess {
     ) -> Result<Option<String>> {
         let stdin_fd = 0i32;
         let mut stdin = io::stdin();
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; DEFAULT_BUFFER_SIZE]; // Use 16KB buffer
 
         // SSH-style escape sequence tracking
         let mut at_line_start = true;
@@ -588,7 +593,7 @@ impl PtyProcess {
 
         // Support multiple concurrent clients
         let mut active_clients: Vec<ClientInfo> = Vec::new();
-        let mut buffer = [0u8; 4096];
+        let mut buffer = [0u8; DEFAULT_BUFFER_SIZE]; // Use 16KB buffer
 
         // Get session ID from socket path
         let session_id = self
@@ -787,7 +792,7 @@ impl PtyProcess {
         session_id: &str,
     ) -> Result<()> {
         let mut disconnected_indices = Vec::new();
-        let mut client_buffer = [0u8; 1024];
+        let mut client_buffer = [0u8; DEFAULT_BUFFER_SIZE]; // Use 16KB buffer
 
         for (i, client) in active_clients.iter_mut().enumerate() {
             match client.stream.read(&mut client_buffer) {

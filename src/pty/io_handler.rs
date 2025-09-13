@@ -9,6 +9,10 @@ use std::time::Duration;
 
 use crate::pty_buffer::PtyBuffer;
 
+/// Buffer size constants for improved performance
+pub const DEFAULT_BUFFER_SIZE: usize = 16384; // 16KB for better throughput
+pub const SMALL_BUFFER_SIZE: usize = 4096; // 4KB for control messages
+
 /// Handle reading from PTY master and broadcasting to clients
 pub struct PtyIoHandler {
     master_fd: RawFd,
@@ -20,7 +24,7 @@ impl PtyIoHandler {
     pub fn new(master_fd: RawFd) -> Self {
         Self {
             master_fd,
-            buffer_size: 4096,
+            buffer_size: DEFAULT_BUFFER_SIZE, // Use 16KB buffer for better performance
         }
     }
 
@@ -99,7 +103,7 @@ pub fn spawn_socket_to_stdout_thread(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut stdout = io::stdout();
-        let mut buffer = [0u8; 4096];
+        let mut buffer = [0u8; DEFAULT_BUFFER_SIZE]; // Use 16KB buffer
 
         while running.load(Ordering::SeqCst) {
             match socket.read(&mut buffer) {
@@ -176,7 +180,7 @@ pub fn send_buffered_output(
         stream.flush()?;
 
         // Send buffered data in chunks to avoid overwhelming the client
-        for chunk in buffered_data.chunks(4096) {
+        for chunk in buffered_data.chunks(DEFAULT_BUFFER_SIZE) {
             stream.write_all(chunk)?;
             stream.flush()?;
             thread::sleep(Duration::from_millis(1));

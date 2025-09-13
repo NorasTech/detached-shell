@@ -16,6 +16,10 @@ exclude = [
     ".github/*",
 ]
 
+[features]
+default = []
+async = ["tokio"]
+
 [[bin]]
 name = "nds"
 path = "src/main.rs"
@@ -33,6 +37,7 @@ directories = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 libc = "0.2"
 ctrlc = "3.4"
+tokio = { version = "1.41", features = ["full"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.12"
