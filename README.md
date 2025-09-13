@@ -24,6 +24,7 @@ Simple detachable shell sessions with zero configuration. Not a complex multiple
 - 🧹 **Auto-Cleanup**: Automatic cleanup of dead sessions
 - 🔄 **Session Switching**: Simple attach/detach without complex multiplexing
 - 🏷️ **Named Sessions**: Give meaningful names to your sessions
+- 👁️ **Session Indicators**: Visual indicators showing you're in an NDS session
 - 🐧 **Cross-Platform**: Works on Linux and macOS
 
 ## 🎯 Philosophy
@@ -134,6 +135,42 @@ nds history -s abc123    # History for specific session
 - `Ctrl+D` - Detach from current session (when at empty prompt)
 - `Enter, ~s` - Switch to another session interactively
 
+### Session Indicators
+
+NDS automatically shows you when you're inside a session with subtle visual indicators:
+
+- **Terminal Title**: Shows `NDS: session-name` in your terminal window title
+- **Prompt Indicator**: Adds a visual prefix to your shell prompt
+
+#### Indicator Styles
+
+Control how session indicators appear with the `NDS_PROMPT_STYLE` environment variable:
+
+```bash
+# Subtle symbol (default) - shows ⬢ prefix
+export NDS_PROMPT_STYLE=subtle
+⬢ user@host:~$ 
+
+# Full session info - shows [nds:session-name] prefix  
+export NDS_PROMPT_STYLE=full
+[nds:my-project] user@host:~$ 
+
+# Minimal - shows [nds] prefix
+export NDS_PROMPT_STYLE=minimal
+[nds] user@host:~$ 
+
+# Disable indicators completely
+export NDS_PROMPT_STYLE=none
+user@host:~$ 
+```
+
+#### How It Works
+
+- **Automatic**: No configuration files to modify - works out of the box
+- **Shell Agnostic**: Works with bash, zsh, and other shells
+- **Non-invasive**: Doesn't modify your existing shell configuration
+- **User Control**: Can be customized or disabled entirely
+
 ## 🏗️ Architecture
 
 NDS uses a simple and robust architecture:
@@ -211,6 +248,11 @@ export NDS_SHELL=/bin/zsh
 # Session identification (automatically set inside sessions)
 NDS_SESSION_ID      # Current session ID when attached
 NDS_SESSION_NAME    # Current session name (if set)
+
+# Session indicator customization
+export NDS_PROMPT_STYLE=subtle    # Options: subtle, full, minimal, none
+NDS_SESSION_DISPLAY             # Display name used in indicators (auto-set)
+NDS_PROMPT_PREFIX              # Computed prefix based on style (auto-set)
 
 # Change detach key binding (coming soon)
 export NDS_DETACH_KEY="ctrl-a d"

@@ -243,19 +243,23 @@ impl PtyProcess {
                     std::env::set_var("NDS_SESSION_NAME", session_id);
                 }
 
+                // Set session indicator environment variables
+                Self::set_session_indicator_env(session_id, &name);
+
                 // Set restrictive umask for session isolation
                 unsafe {
                     libc::umask(0o077); // Only owner can read/write/execute new files
                 }
 
-                // Get shell
+                // Get shell and prepare with session indicator
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                
+                // Create shell startup command with session indicator setup
+                let shell_args = Self::prepare_shell_with_indicator(&shell, session_id, &name)?;
 
-                // Execute shell
-                let shell_cstr = std::ffi::CString::new(shell.as_str()).unwrap();
-                let args = vec![shell_cstr.clone()];
-
-                execvp(&shell_cstr, &args)
+                // Execute shell with prepared arguments
+                let shell_cstr = std::ffi::CString::new(shell_args.0.as_str()).unwrap();
+                execvp(&shell_cstr, &shell_args.1)
                     .map_err(|e| NdsError::ProcessError(format!("execvp failed: {}", e)))?;
 
                 // Should never reach here
@@ -272,6 +276,9 @@ impl PtyProcess {
             "NDS_SESSION_NAME",
             session.name.as_ref().unwrap_or(&session.id),
         );
+
+        // Set session indicator environment variables for attach
+        Self::set_session_indicator_env(&session.id, &session.name);
 
         // Save current terminal state
         let stdin_fd = 0;
@@ -866,6 +873,141 @@ impl PtyProcess {
         Session::cleanup(session_id)?;
 
         Ok(())
+    }
+
+    /// Set session indicator environment variables
+    fn set_session_indicator_env(session_id: &str, name: &Option<String>) {
+        // Set prompt style (user can override with NDS_PROMPT_STYLE=none to disable)
+        if std::env::var("NDS_PROMPT_STYLE").is_err() {
+            std::env::set_var("NDS_PROMPT_STYLE", "subtle");
+        }
+
+        // Set session display name for prompt
+        let display_name = if let Some(ref session_name) = name {
+            session_name.clone()
+        } else {
+            // Use first 6 chars of session ID for brevity
+            session_id.chars().take(6).collect::<String>()
+        };
+        std::env::set_var("NDS_SESSION_DISPLAY", &display_name);
+
+        // Set prompt prefix based on style
+        let style = std::env::var("NDS_PROMPT_STYLE").unwrap_or_else(|_| "subtle".to_string());
+        let prefix = match style.as_str() {
+            "full" => format!("[nds:{}]", display_name),
+            "minimal" => "[nds]".to_string(),
+            "symbol" => "⬢".to_string(),
+            "none" => String::new(),
+            _ => "⬢".to_string(), // default to subtle symbol
+        };
+        std::env::set_var("NDS_PROMPT_PREFIX", &prefix);
+    }
+
+    /// Prepare shell execution with session indicator setup
+    fn prepare_shell_with_indicator(
+        shell: &str,
+        session_id: &str,
+        name: &Option<String>,
+    ) -> Result<(String, Vec<std::ffi::CString>)> {
+        let prompt_style = std::env::var("NDS_PROMPT_STYLE").unwrap_or_else(|_| "subtle".to_string());
+        
+        // If disabled, just return normal shell
+        if prompt_style == "none" {
+            let shell_cstr = std::ffi::CString::new(shell).unwrap();
+            return Ok((shell.to_string(), vec![shell_cstr]));
+        }
+
+        // Create shell initialization script for session indicator
+        let display_name = if let Some(ref session_name) = name {
+            session_name.clone()
+        } else {
+            session_id.chars().take(6).collect::<String>()
+        };
+
+        // Shell-specific setup for prompt modification
+        let setup_script = if shell.contains("zsh") {
+            format!(
+                r#"
+# NDS Session Indicator Setup for Zsh
+if [[ -n "$NDS_SESSION_ID" && "$NDS_PROMPT_STYLE" != "none" ]]; then
+    case "$NDS_PROMPT_STYLE" in
+        "full") NDS_PREFIX="[nds:{}] " ;;
+        "minimal") NDS_PREFIX="[nds] " ;;
+        "symbol") NDS_PREFIX="⬢ " ;;
+        *) NDS_PREFIX="⬢ " ;;
+    esac
+    
+    # Set terminal title
+    print -Pn "\e]0;NDS: {}\a"
+    
+    # Modify PS1 if it exists, otherwise create a basic one
+    if [[ -n "$PS1" ]]; then
+        export PS1="$NDS_PREFIX$PS1"
+    else
+        export PS1="$NDS_PREFIX%n@%m:%~$ "
+    fi
+fi
+"#,
+                display_name, display_name
+            )
+        } else if shell.contains("bash") {
+            format!(
+                r#"
+# NDS Session Indicator Setup for Bash
+if [[ -n "$NDS_SESSION_ID" && "$NDS_PROMPT_STYLE" != "none" ]]; then
+    case "$NDS_PROMPT_STYLE" in
+        "full") NDS_PREFIX="[nds:{}] " ;;
+        "minimal") NDS_PREFIX="[nds] " ;;
+        "symbol") NDS_PREFIX="⬢ " ;;
+        *) NDS_PREFIX="⬢ " ;;
+    esac
+    
+    # Set terminal title
+    echo -ne "\033]0;NDS: {}\007"
+    
+    # Modify PS1 if it exists, otherwise create a basic one
+    if [[ -n "$PS1" ]]; then
+        export PS1="$NDS_PREFIX$PS1"
+    else
+        export PS1="$NDS_PREFIX\u@\h:\w\$ "
+    fi
+fi
+"#,
+                display_name, display_name
+            )
+        } else {
+            // Generic shell setup
+            format!(
+                r#"
+# NDS Session Indicator Setup (Generic)
+if [ -n "$NDS_SESSION_ID" ] && [ "$NDS_PROMPT_STYLE" != "none" ]; then
+    case "$NDS_PROMPT_STYLE" in
+        "full") NDS_PREFIX="[nds:{}] " ;;
+        "minimal") NDS_PREFIX="[nds] " ;;
+        *) NDS_PREFIX="⬢ " ;;
+    esac
+    
+    if [ -n "$PS1" ]; then
+        export PS1="$NDS_PREFIX$PS1"
+    else
+        export PS1="$NDS_PREFIX\$ "
+    fi
+fi
+"#,
+                display_name
+            )
+        };
+
+        // Execute shell with initialization script
+        let shell_cstr = std::ffi::CString::new(shell).unwrap();
+        let init_flag = std::ffi::CString::new("-c").unwrap();
+        let full_command = format!("{}{}", setup_script, shell);
+        let command_cstr = std::ffi::CString::new(full_command).unwrap();
+
+        Ok((
+            shell.to_string(),
+            vec![shell_cstr, init_flag, command_cstr],
+        ))
     }
 }
 
