@@ -1,6 +1,6 @@
 [package]
 name = "detached-shell"
-version = "0.1.1"
+version = "0.1.2"
 readme = "README.md"
 edition = "2021"
 authors = ["Kerem Noras <kerem@noras.tech>"]
@@ -15,6 +15,10 @@ exclude = [
     "scripts/test/*",
     ".github/*",
 ]
+
+[features]
+default = []
+async = ["tokio"]
 
 [[bin]]
 name = "nds"
@@ -33,6 +37,7 @@ directories = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 libc = "0.2"
 ctrlc = "3.4"
+tokio = { version = "1.41", features = ["full"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.12"

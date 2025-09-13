@@ -6,6 +6,13 @@ mod socket;
 mod spawn;
 mod terminal;
 
+// Async versions for tokio runtime
+#[cfg(feature = "async")]
+mod io_handler_async;
+#[cfg(feature = "async")]
+#[cfg(feature = "async")]
+pub mod socket_async;
+
 #[cfg(test)]
 mod tests;
 

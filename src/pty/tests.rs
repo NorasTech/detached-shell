@@ -188,7 +188,6 @@ mod tests {
         use crate::pty::client::*;
         use crate::pty::io_handler::*;
         use crate::pty::socket::*;
-        use crate::pty::terminal::*;
 
         #[test]
         fn test_parse_nds_command_empty() {
@@ -206,11 +205,12 @@ mod tests {
 
         #[test]
         fn test_parse_nds_command_no_args() {
-            let cmd = b"\x1b]nds:ping\x07";
+            // Use an allowed command instead of "ping"
+            let cmd = b"\x1b]nds:detach\x07";
             let result = parse_nds_command(cmd);
             assert!(result.is_some());
             let (cmd_name, args) = result.unwrap();
-            assert_eq!(cmd_name, "ping");
+            assert_eq!(cmd_name, "detach");
             assert_eq!(args.len(), 0);
         }
 
@@ -233,6 +233,7 @@ mod tests {
             let (mut stream1, mut stream2) = UnixStream::pair().unwrap();
 
             // Send resize with zero dimensions (edge case)
+            // Should be sanitized to 1:1 for security
             let result = send_resize_command(&mut stream1, 0, 0);
             assert!(result.is_ok());
 
@@ -242,7 +243,7 @@ mod tests {
             let n = stream2.read(&mut buffer).unwrap();
 
             let received = &buffer[..n];
-            let expected = format!("\x1b]nds:resize:0:0\x07");
+            let expected = format!("\x1b]nds:resize:1:1\x07"); // Sanitized to 1:1
             assert_eq!(received, expected.as_bytes());
         }
 
@@ -262,6 +263,18 @@ mod tests {
             let received = &buffer[..n];
             let expected = format!("\x1b]nds:resize:9999:9999\x07");
             assert_eq!(received, expected.as_bytes());
+        }
+
+        #[test]
+        fn test_parse_nds_command_invalid_command() {
+            // Test that invalid commands are rejected for security
+            let cmd = b"\x1b]nds:rm:rf:/\x07"; // Dangerous command
+            let result = parse_nds_command(cmd);
+            assert!(result.is_none(), "Invalid command should be rejected");
+
+            let cmd2 = b"\x1b]nds:unknown:command\x07"; // Unknown command
+            let result2 = parse_nds_command(cmd2);
+            assert!(result2.is_none(), "Unknown command should be rejected");
         }
 
         #[test]
