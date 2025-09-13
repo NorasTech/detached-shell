@@ -8,7 +8,7 @@ fn test_cli_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("nds 0.1.0"));
+        .stdout(predicate::str::contains("nds 0.1.1"));
 }
 
 #[test]
