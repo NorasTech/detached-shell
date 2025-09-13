@@ -2,6 +2,9 @@
 pub mod info;
 pub mod session;
 
+#[cfg(test)]
+mod test;
+
 // Re-export commonly used items for convenience
 pub use session::{
     handle_attach_session, handle_clean_sessions, handle_kill_sessions, handle_new_session,

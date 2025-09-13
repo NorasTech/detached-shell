@@ -1,0 +1,15 @@
+#!/bin/sh
+# Pre-commit hook to run rustfmt
+
+echo "Running rustfmt check..."
+cargo fmt --all -- --check
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Rustfmt check failed. Please run 'cargo fmt --all' before committing."
+    echo ""
+    exit 1
+fi
+
+echo "✅ Rustfmt check passed"
+exit 0

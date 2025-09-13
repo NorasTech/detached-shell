@@ -874,14 +874,17 @@ impl Drop for PtyProcess {
 }
 
 // Public convenience functions for backward compatibility
+#[allow(dead_code)]
 pub fn spawn_new_detached(session_id: &str) -> Result<Session> {
     PtyProcess::spawn_new_detached(session_id)
 }
 
+#[allow(dead_code)]
 pub fn spawn_new_detached_with_name(session_id: &str, name: Option<String>) -> Result<Session> {
     PtyProcess::spawn_new_detached_with_name(session_id, name)
 }
 
+#[allow(dead_code)]
 pub fn kill_session(session_id: &str) -> Result<()> {
     PtyProcess::kill_session(session_id)
 }

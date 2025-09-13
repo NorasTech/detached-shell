@@ -144,6 +144,7 @@ impl<'a> SessionSwitcher<'a> {
 }
 
 /// Show the session help message
+#[allow(dead_code)]
 pub fn show_session_help() {
     println!("\r\n[Session Commands]\r");
     println!("\r  ~d - Detach from current session\r");

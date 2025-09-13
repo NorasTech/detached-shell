@@ -10,6 +10,7 @@ pub struct ClientInfo {
 }
 
 impl ClientInfo {
+    #[allow(dead_code)]
     pub fn new(stream: UnixStream) -> Self {
         // Get initial terminal size
         let (rows, cols) = get_terminal_size().unwrap_or((24, 80));
@@ -17,12 +18,14 @@ impl ClientInfo {
         Self { stream, rows, cols }
     }
 
+    #[allow(dead_code)]
     pub fn update_size(&mut self, rows: u16, cols: u16) {
         self.rows = rows;
         self.cols = cols;
     }
 }
 
+#[allow(dead_code)]
 pub fn get_terminal_size() -> Result<(u16, u16), std::io::Error> {
     unsafe {
         let mut size: libc::winsize = std::mem::zeroed();
