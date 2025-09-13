@@ -1,5 +1,5 @@
-use std::os::unix::net::UnixStream;
 use nix::libc;
+use std::os::unix::net::UnixStream;
 
 // Structure to track client information
 #[derive(Debug)]
@@ -13,14 +13,10 @@ impl ClientInfo {
     pub fn new(stream: UnixStream) -> Self {
         // Get initial terminal size
         let (rows, cols) = get_terminal_size().unwrap_or((24, 80));
-        
-        Self {
-            stream,
-            rows,
-            cols,
-        }
+
+        Self { stream, rows, cols }
     }
-    
+
     pub fn update_size(&mut self, rows: u16, cols: u16) {
         self.rows = rows;
         self.cols = cols;

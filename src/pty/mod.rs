@@ -1,10 +1,10 @@
 // PTY process management module
 mod client;
-mod socket;
-mod terminal;
 mod io_handler;
 mod session_switcher;
+mod socket;
 mod spawn;
+mod terminal;
 
 // Re-export main types for backward compatibility
 pub use spawn::PtyProcess;

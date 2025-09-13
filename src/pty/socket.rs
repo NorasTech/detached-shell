@@ -1,6 +1,6 @@
+use std::io::{self, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::io::{self, Write};
 
 use crate::error::{NdsError, Result};
 use crate::session::Session;
@@ -8,15 +8,15 @@ use crate::session::Session;
 /// Creates a Unix socket listener for a session
 pub fn create_listener(session_id: &str) -> Result<(UnixListener, PathBuf)> {
     let socket_path = Session::socket_dir()?.join(format!("{}.sock", session_id));
-    
+
     // Remove socket if it exists
     if socket_path.exists() {
         std::fs::remove_file(&socket_path)?;
     }
-    
+
     let listener = UnixListener::bind(&socket_path)
         .map_err(|e| NdsError::SocketError(format!("Failed to bind socket: {}", e)))?;
-    
+
     Ok((listener, socket_path))
 }
 

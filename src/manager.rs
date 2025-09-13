@@ -132,11 +132,17 @@ pub struct SessionDisplay<'a> {
 
 impl<'a> SessionDisplay<'a> {
     pub fn new(session: &'a Session) -> Self {
-        SessionDisplay { session, is_current: false }
+        SessionDisplay {
+            session,
+            is_current: false,
+        }
     }
-    
+
     pub fn with_current(session: &'a Session, is_current: bool) -> Self {
-        SessionDisplay { session, is_current }
+        SessionDisplay {
+            session,
+            is_current,
+        }
     }
 
     fn format_duration(&self) -> String {
@@ -158,12 +164,14 @@ impl<'a> SessionDisplay<'a> {
         let now = Local::now();
         let local_time: DateTime<Local> = self.session.created_at.into();
         let duration = now.signed_duration_since(local_time);
-        
+
         if duration.num_days() > 0 {
-            format!("{}d, {:02}:{:02}", 
-                duration.num_days(), 
-                local_time.hour(), 
-                local_time.minute())
+            format!(
+                "{}d, {:02}:{:02}",
+                duration.num_days(),
+                local_time.hour(),
+                local_time.minute()
+            )
         } else {
             local_time.format("%H:%M:%S").to_string()
         }
@@ -174,21 +182,38 @@ impl<'a> fmt::Display for SessionDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Get client count
         let client_count = self.session.get_client_count();
-        
+
         // Status icon and color
         let (icon, status_text) = if self.is_current {
-            ("★", format!("CURRENT · {} client{}", client_count, if client_count == 1 { "" } else { "s" }))
+            (
+                "★",
+                format!(
+                    "CURRENT · {} client{}",
+                    client_count,
+                    if client_count == 1 { "" } else { "s" }
+                ),
+            )
         } else if client_count > 0 {
-            ("●", format!("{} client{}", client_count, if client_count == 1 { "" } else { "s" }))
+            (
+                "●",
+                format!(
+                    "{} client{}",
+                    client_count,
+                    if client_count == 1 { "" } else { "s" }
+                ),
+            )
         } else {
             ("○", "detached".to_string())
         };
-        
+
         // Truncate working dir if too long
         let mut working_dir = self.session.working_dir.clone();
         if working_dir.len() > 30 {
             // Show last 27 chars with ellipsis
-            working_dir = format!("...{}", &self.session.working_dir[self.session.working_dir.len() - 27..]);
+            working_dir = format!(
+                "...{}",
+                &self.session.working_dir[self.session.working_dir.len() - 27..]
+            );
         }
 
         // Format with sleek layout including all info
@@ -215,7 +240,10 @@ impl SessionTable {
     pub fn new(sessions: Vec<Session>) -> Self {
         // Check if we're currently attached to a session
         let current_session_id = std::env::var("NDS_SESSION_ID").ok();
-        SessionTable { sessions, current_session_id }
+        SessionTable {
+            sessions,
+            current_session_id,
+        }
     }
 
     pub fn print(&self) {

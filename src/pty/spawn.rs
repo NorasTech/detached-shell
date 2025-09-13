@@ -13,19 +13,21 @@ use nix::sys::signal::{kill, Signal};
 use nix::sys::termios::Termios;
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
+use super::client::ClientInfo;
+use super::io_handler::{
+    send_buffered_output, spawn_resize_monitor_thread, spawn_socket_to_stdout_thread, PtyIoHandler,
+    ScrollbackHandler,
+};
+use super::session_switcher::{SessionSwitcher, SwitchResult};
+use super::socket::{create_listener, get_command_end, parse_nds_command, send_resize_command};
+use super::terminal::{
+    capture_terminal_state, get_terminal_size, restore_terminal, save_terminal_state, send_refresh,
+    send_terminal_refresh_sequences, set_raw_mode, set_stdin_nonblocking, set_terminal_size,
+};
 use crate::error::{NdsError, Result};
 use crate::pty_buffer::PtyBuffer;
 use crate::scrollback::ScrollbackViewer;
 use crate::session::Session;
-use super::client::ClientInfo;
-use super::io_handler::{PtyIoHandler, ScrollbackHandler, spawn_socket_to_stdout_thread, spawn_resize_monitor_thread, send_buffered_output};
-use super::session_switcher::{SessionSwitcher, SwitchResult};
-use super::socket::{create_listener, send_resize_command, parse_nds_command, get_command_end};
-use super::terminal::{
-    save_terminal_state, set_raw_mode, restore_terminal, get_terminal_size,
-    set_terminal_size, set_stdin_nonblocking, send_refresh, send_terminal_refresh_sequences,
-    capture_terminal_state
-};
 
 pub struct PtyProcess {
     pub master_fd: RawFd,
@@ -240,7 +242,7 @@ impl PtyProcess {
                 } else {
                     std::env::set_var("NDS_SESSION_NAME", session_id);
                 }
-                
+
                 // Get shell
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
@@ -261,8 +263,11 @@ impl PtyProcess {
     pub fn attach_to_session(session: &Session) -> Result<Option<String>> {
         // Set environment variables
         std::env::set_var("NDS_SESSION_ID", &session.id);
-        std::env::set_var("NDS_SESSION_NAME", session.name.as_ref().unwrap_or(&session.id));
-        
+        std::env::set_var(
+            "NDS_SESSION_NAME",
+            session.name.as_ref().unwrap_or(&session.id),
+        );
+
         // Save current terminal state
         let stdin_fd = 0;
         let original_termios = save_terminal_state(stdin_fd)?;
@@ -303,23 +308,23 @@ impl PtyProcess {
         let scrollback = ScrollbackHandler::new(10 * 1024 * 1024); // 10MB
 
         // Spawn resize monitor thread
-        let socket_for_resize = socket.try_clone()
+        let socket_for_resize = socket
+            .try_clone()
             .map_err(|e| NdsError::SocketError(format!("Failed to clone socket: {}", e)))?;
         let resize_running = running.clone();
-        let _resize_monitor = spawn_resize_monitor_thread(socket_for_resize, resize_running, (cols, rows));
+        let _resize_monitor =
+            spawn_resize_monitor_thread(socket_for_resize, resize_running, (cols, rows));
 
         // Spawn socket to stdout thread
-        let socket_clone = socket.try_clone()
+        let socket_clone = socket
+            .try_clone()
             .map_err(|e| NdsError::SocketError(format!("Failed to clone socket: {}", e)))?;
-        let socket_to_stdout = spawn_socket_to_stdout_thread(
-            socket_clone,
-            r2,
-            scrollback.get_shared_buffer()
-        );
+        let socket_to_stdout =
+            spawn_socket_to_stdout_thread(socket_clone, r2, scrollback.get_shared_buffer());
 
         // Set stdin to non-blocking
         set_stdin_nonblocking(stdin_fd)?;
-        
+
         // Main input loop
         let result = Self::handle_input_loop(
             &mut socket,
@@ -342,7 +347,7 @@ impl PtyProcess {
         // Clear environment variables
         std::env::remove_var("NDS_SESSION_ID");
         std::env::remove_var("NDS_SESSION_NAME");
-        
+
         println!("\n[Detached from session {}]", session.id);
         let _ = io::stdout().flush();
 
@@ -378,8 +383,13 @@ impl PtyProcess {
                     break;
                 }
                 Ok(n) => {
-                    let (should_detach, should_switch, should_scroll, data_to_forward) = 
-                        Self::process_input(&buffer[..n], &mut at_line_start, &mut escape_state, &mut escape_time);
+                    let (should_detach, should_switch, should_scroll, data_to_forward) =
+                        Self::process_input(
+                            &buffer[..n],
+                            &mut at_line_start,
+                            &mut escape_state,
+                            &mut escape_time,
+                        );
 
                     if should_detach {
                         println!("\r\n[Detaching from session {}]\r", session.id);
@@ -501,7 +511,8 @@ impl PtyProcess {
                             data_to_forward.push(b'~');
                             data_to_forward.push(byte);
                             *escape_state = 0;
-                            *at_line_start = byte == b'\r' || byte == b'\n' || byte == 10 || byte == 13;
+                            *at_line_start =
+                                byte == b'\r' || byte == b'\n' || byte == 10 || byte == 13;
                         }
                     }
                 }
@@ -521,7 +532,7 @@ impl PtyProcess {
     ) -> Result<()> {
         use nix::sys::termios::{tcsetattr, SetArg};
         use std::os::unix::io::BorrowedFd;
-        
+
         println!("\r\n[Opening scrollback viewer...]\r");
 
         // Get scrollback content
@@ -530,10 +541,10 @@ impl PtyProcess {
         // Temporarily restore terminal for viewer
         let stdin_fd = 0;
         let stdin = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-        
+
         // Get current raw mode settings
         let raw_termios = nix::sys::termios::tcgetattr(&stdin)?;
-        
+
         // Restore to original mode for viewer
         tcsetattr(&stdin, SetArg::TCSANOW, original_termios)?;
 
@@ -553,7 +564,9 @@ impl PtyProcess {
 
     /// Run the detached PTY handler
     pub fn run_detached(mut self) -> Result<()> {
-        let listener = self.listener.take()
+        let listener = self
+            .listener
+            .take()
             .ok_or_else(|| NdsError::PtyError("No listener available".to_string()))?;
 
         // Set listener to non-blocking
@@ -568,7 +581,9 @@ impl PtyProcess {
         })
         .map_err(|e| NdsError::SignalError(format!("Failed to set signal handler: {}", e)))?;
 
-        let output_buffer = self.output_buffer.take()
+        let output_buffer = self
+            .output_buffer
+            .take()
             .ok_or_else(|| NdsError::PtyError("No output buffer available".to_string()))?;
 
         // Support multiple concurrent clients
@@ -576,7 +591,8 @@ impl PtyProcess {
         let mut buffer = [0u8; 4096];
 
         // Get session ID from socket path
-        let session_id = self.socket_path
+        let session_id = self
+            .socket_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
@@ -657,7 +673,11 @@ impl PtyProcess {
         Ok(())
     }
 
-    fn read_from_pty(&self, io_handler: &PtyIoHandler, buffer: &mut [u8]) -> Result<Option<Vec<u8>>> {
+    fn read_from_pty(
+        &self,
+        io_handler: &PtyIoHandler,
+        buffer: &mut [u8],
+    ) -> Result<Option<Vec<u8>>> {
         match io_handler.read_from_pty(buffer) {
             Ok(0) => Err(NdsError::PtyError("Child process exited".to_string())),
             Ok(n) => Ok(Some(buffer[..n].to_vec())),
@@ -714,7 +734,6 @@ impl PtyProcess {
         disconnected_indices: Vec<usize>,
         session_id: &str,
     ) -> Result<()> {
-        
         for i in disconnected_indices.iter().rev() {
             active_clients.remove(*i);
         }
@@ -728,13 +747,13 @@ impl PtyProcess {
                 "\r\n[A client disconnected (remaining: {})]\r\n",
                 active_clients.len()
             );
-            
+
             for client in active_clients.iter_mut() {
                 let _ = client.stream.write_all(notification.as_bytes());
                 let _ = send_terminal_refresh_sequences(&mut client.stream);
                 let _ = client.stream.flush();
             }
-            
+
             // Resize to smallest terminal
             self.resize_to_smallest(active_clients)?;
         }
@@ -744,16 +763,16 @@ impl PtyProcess {
     fn resize_to_smallest(&self, active_clients: &[ClientInfo]) -> Result<()> {
         let mut min_cols = u16::MAX;
         let mut min_rows = u16::MAX;
-        
+
         for client in active_clients {
             min_cols = min_cols.min(client.cols);
             min_rows = min_rows.min(client.rows);
         }
-        
+
         if min_cols != u16::MAX && min_rows != u16::MAX {
             set_terminal_size(self.master_fd, min_cols, min_rows)?;
             let _ = kill(self.pid, Signal::SIGWINCH);
-            
+
             // Send refresh
             let io_handler = PtyIoHandler::new(self.master_fd);
             let _ = io_handler.send_refresh();
@@ -777,16 +796,18 @@ impl PtyProcess {
                 }
                 Ok(n) => {
                     let data = &client_buffer[..n];
-                    
+
                     // Check for NDS commands
                     if let Some((cmd, args)) = parse_nds_command(data) {
                         if cmd == "resize" && args.len() == 2 {
-                            if let (Ok(cols), Ok(rows)) = (args[0].parse::<u16>(), args[1].parse::<u16>()) {
+                            if let (Ok(cols), Ok(rows)) =
+                                (args[0].parse::<u16>(), args[1].parse::<u16>())
+                            {
                                 client.cols = cols;
                                 client.rows = rows;
                                 set_terminal_size(self.master_fd, cols, rows)?;
                                 let _ = kill(self.pid, Signal::SIGWINCH);
-                                
+
                                 // Forward any remaining data after command
                                 if let Some(end_idx) = get_command_end(data) {
                                     if end_idx < n {
@@ -797,7 +818,7 @@ impl PtyProcess {
                             }
                         }
                     }
-                    
+
                     // Normal data - forward to PTY
                     io_handler.write_to_pty(data)?;
                 }

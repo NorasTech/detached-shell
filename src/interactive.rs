@@ -3,7 +3,9 @@ use chrono::Timelike;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        self, disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{
     backend::{Backend, CrosstermBackend},
@@ -33,22 +35,26 @@ impl InteractivePicker {
 
         let mut state = ListState::default();
         state.select(Some(0));
-        
+
         // Check if we're currently attached to a session
         let mut current_session_id = std::env::var("NDS_SESSION_ID").ok();
-        
+
         // Fallback: If no environment variable, try to detect from parent processes
         if current_session_id.is_none() {
             current_session_id = Self::detect_current_session(&sessions);
         }
 
-        Ok(Self { sessions, state, current_session_id })
+        Ok(Self {
+            sessions,
+            state,
+            current_session_id,
+        })
     }
 
     fn detect_current_session(sessions: &[Session]) -> Option<String> {
         // Try to detect current session by checking parent processes
         let mut ppid = std::process::id();
-        
+
         // Walk up the process tree (max 10 levels to avoid infinite loops)
         for _ in 0..10 {
             // Get parent process ID
@@ -65,10 +71,10 @@ impl InteractivePicker {
                 break;
             }
         }
-        
+
         None
     }
-    
+
     fn get_parent_pid(pid: i32) -> Option<i32> {
         // Read /proc/[pid]/stat on Linux or use ps on macOS
         #[cfg(target_os = "macos")]
@@ -78,7 +84,7 @@ impl InteractivePicker {
                 .args(&["-p", &pid.to_string(), "-o", "ppid="])
                 .output()
                 .ok()?;
-            
+
             if output.status.success() {
                 let ppid_str = String::from_utf8_lossy(&output.stdout);
                 ppid_str.trim().parse::<i32>().ok()
@@ -86,7 +92,7 @@ impl InteractivePicker {
                 None
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             use std::fs;
@@ -100,13 +106,13 @@ impl InteractivePicker {
                 None
             }
         }
-        
+
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             None
         }
     }
-    
+
     pub fn run(&mut self) -> Result<Option<String>> {
         // Setup terminal
         enable_raw_mode()?;
@@ -228,56 +234,71 @@ impl InteractivePicker {
 
                 // Check if this is the current attached session
                 let is_current = self.current_session_id.as_ref() == Some(&session.id);
-                
+
                 // Status indicator - simplified
                 let (status_icon, status_color) = if is_current {
                     ("★", Color::Cyan)
                 } else if client_count > 0 {
-                    ("●", Color::Green) 
+                    ("●", Color::Green)
                 } else {
                     ("○", Color::Gray)
                 };
-                
+
                 // Session name styling
                 let name_style = if is_current {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
-                
+
                 // Build the status text that appears on the right
                 let status_text = if is_current {
                     if client_count > 0 {
-                        format!("CURRENT SESSION · {} CLIENT{}", client_count, if client_count == 1 { "" } else { "S" })
+                        format!(
+                            "CURRENT SESSION · {} CLIENT{}",
+                            client_count,
+                            if client_count == 1 { "" } else { "S" }
+                        )
                     } else {
                         "CURRENT SESSION".to_string()
                     }
                 } else if client_count > 0 {
-                    format!("{} CLIENT{}", client_count, if client_count == 1 { "" } else { "S" })
+                    format!(
+                        "{} CLIENT{}",
+                        client_count,
+                        if client_count == 1 { "" } else { "S" }
+                    )
                 } else {
                     "DETACHED".to_string()
                 };
-                
+
                 // Format created time
                 let now = chrono::Local::now();
                 let local_time: chrono::DateTime<chrono::Local> = session.created_at.into();
                 let duration = now.signed_duration_since(local_time);
-                
+
                 let created_time = if duration.num_days() > 0 {
-                    format!("{}d, {:02}:{:02}", 
-                        duration.num_days(), 
-                        local_time.hour(), 
-                        local_time.minute())
+                    format!(
+                        "{}d, {:02}:{:02}",
+                        duration.num_days(),
+                        local_time.hour(),
+                        local_time.minute()
+                    )
                 } else {
                     local_time.format("%H:%M:%S").to_string()
                 };
-                
+
                 // Truncate working dir if too long
                 let mut working_dir = session.working_dir.clone();
                 if working_dir.len() > 30 {
-                    working_dir = format!("...{}", &session.working_dir[session.working_dir.len() - 27..]);
+                    working_dir = format!(
+                        "...{}",
+                        &session.working_dir[session.working_dir.len() - 27..]
+                    );
                 }
-                
+
                 // Build left side with fixed widths
                 let left_side = format!(
                     " {} {:<25} │ PID {:<6} │ {:<8} │ {:<8} │ {:<30}",
@@ -288,80 +309,63 @@ impl InteractivePicker {
                     created_time,
                     working_dir
                 );
-                
+
                 // Calculate padding for right alignment
                 let terminal_width = terminal::size().unwrap_or((80, 24)).0 as usize;
                 let left_len = left_side.chars().count();
                 let status_len = status_text.chars().count();
                 let padding = terminal_width.saturating_sub(left_len + status_len + 2);
 
-                let content = vec![
-                    Line::from(vec![
-                        Span::styled(
-                            format!(" {} ", status_icon),
-                            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("{:<25}", session.display_name()),
-                            name_style,
-                        ),
-                        Span::styled(
-                            " │ ",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            format!("PID {:<6}", session.pid),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            " │ ",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            format!("{:<8}", uptime),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            " │ ",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            format!("{:<8}", created_time),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            " │ ",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            format!("{:<30}", working_dir),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            " ".repeat(padding),
-                            Style::default(),
-                        ),
-                        Span::styled(
-                            status_text.clone(),
-                            if is_current {
-                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                            } else if client_count > 0 {
-                                Style::default().fg(Color::Green)
-                            } else {
-                                Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
-                            },
-                        ),
-                    ]),
-                ];
+                let content = vec![Line::from(vec![
+                    Span::styled(
+                        format!(" {} ", status_icon),
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!("{:<25}", session.display_name()), name_style),
+                    Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("PID {:<6}", session.pid),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{:<8}", uptime),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{:<8}", created_time),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{:<30}", working_dir),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(" ".repeat(padding), Style::default()),
+                    Span::styled(
+                        status_text.clone(),
+                        if is_current {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else if client_count > 0 {
+                            Style::default().fg(Color::Green)
+                        } else {
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::DIM)
+                        },
+                    ),
+                ])];
                 ListItem::new(content)
             })
             .collect();
 
         let sessions_list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::NONE),
-            )
+            .block(Block::default().borders(Borders::NONE))
             .highlight_style(
                 Style::default()
                     .bg(Color::Rgb(40, 40, 40))
@@ -382,9 +386,9 @@ impl InteractivePicker {
             Span::styled("q ", Style::default().fg(Color::DarkGray)),
             Span::styled("quit", Style::default().fg(Color::Gray)),
         ];
-        
+
         let session_info = format!("{} sessions", self.sessions.len());
-        
+
         let footer = Paragraph::new(Line::from(help_text))
             .style(Style::default())
             .alignment(Alignment::Center)
@@ -394,7 +398,7 @@ impl InteractivePicker {
                     .border_style(Style::default().fg(Color::DarkGray)),
             );
         f.render_widget(footer, chunks[2]);
-        
+
         // Session count on the right
         let count_widget = Paragraph::new(session_info)
             .style(Style::default().fg(Color::DarkGray))

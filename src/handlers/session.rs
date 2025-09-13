@@ -38,22 +38,24 @@ pub fn handle_new_session(name: Option<String>, attach: bool) -> Result<()> {
 pub fn handle_attach_session(session_id_or_name: &str) -> Result<()> {
     // Allow partial ID or name matching
     let sessions = SessionManager::list_sessions()?;
-    
+
     // First try to match by ID
     let mut matching_sessions: Vec<_> = sessions
         .iter()
         .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
-    
+
     // If no ID matches, try matching by name
     if matching_sessions.is_empty() {
         matching_sessions = sessions
             .iter()
             .filter(|s| {
                 if let Some(ref name) = s.name {
-                    name == session_id_or_name || 
-                    name.starts_with(session_id_or_name) ||
-                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                    name == session_id_or_name
+                        || name.starts_with(session_id_or_name)
+                        || name
+                            .to_lowercase()
+                            .starts_with(&session_id_or_name.to_lowercase())
                 } else {
                     false
                 }
@@ -63,7 +65,10 @@ pub fn handle_attach_session(session_id_or_name: &str) -> Result<()> {
 
     match matching_sessions.len() {
         0 => {
-            eprintln!("No session found matching ID or name: {}", session_id_or_name);
+            eprintln!(
+                "No session found matching ID or name: {}",
+                session_id_or_name
+            );
             Err(NdsError::SessionNotFound(session_id_or_name.to_string()))
         }
         1 => {
@@ -128,16 +133,18 @@ fn kill_single_session(session_id_or_name: &str, sessions: &[Session]) -> Result
         .iter()
         .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
-    
+
     // If no ID matches, try matching by name
     if matching_sessions.is_empty() {
         matching_sessions = sessions
             .iter()
             .filter(|s| {
                 if let Some(ref name) = s.name {
-                    name == session_id_or_name || 
-                    name.starts_with(session_id_or_name) ||
-                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                    name == session_id_or_name
+                        || name.starts_with(session_id_or_name)
+                        || name
+                            .to_lowercase()
+                            .starts_with(&session_id_or_name.to_lowercase())
                 } else {
                     false
                 }
@@ -156,10 +163,7 @@ fn kill_single_session(session_id_or_name: &str, sessions: &[Session]) -> Result
             Ok(session.id.clone())
         }
         _ => {
-            let matches: Vec<String> = matching_sessions
-                .iter()
-                .map(|s| s.display_name())
-                .collect();
+            let matches: Vec<String> = matching_sessions.iter().map(|s| s.display_name()).collect();
             Err(NdsError::SessionNotFound(format!(
                 "Multiple sessions match '{}': {}. Please be more specific",
                 session_id_or_name,
@@ -173,22 +177,24 @@ fn kill_single_session(session_id_or_name: &str, sessions: &[Session]) -> Result
 pub fn handle_rename_session(session_id_or_name: &str, new_name: &str) -> Result<()> {
     // Allow partial ID or name matching
     let sessions = SessionManager::list_sessions()?;
-    
+
     // First try to match by ID
     let mut matching_sessions: Vec<_> = sessions
         .iter()
         .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
-    
+
     // If no ID matches, try matching by name
     if matching_sessions.is_empty() {
         matching_sessions = sessions
             .iter()
             .filter(|s| {
                 if let Some(ref name) = s.name {
-                    name == session_id_or_name || 
-                    name.starts_with(session_id_or_name) ||
-                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                    name == session_id_or_name
+                        || name.starts_with(session_id_or_name)
+                        || name
+                            .to_lowercase()
+                            .starts_with(&session_id_or_name.to_lowercase())
                 } else {
                     false
                 }
@@ -198,7 +204,10 @@ pub fn handle_rename_session(session_id_or_name: &str, new_name: &str) -> Result
 
     match matching_sessions.len() {
         0 => {
-            eprintln!("No session found matching ID or name: {}", session_id_or_name);
+            eprintln!(
+                "No session found matching ID or name: {}",
+                session_id_or_name
+            );
             Err(NdsError::SessionNotFound(session_id_or_name.to_string()))
         }
         1 => {
