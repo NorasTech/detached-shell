@@ -56,13 +56,40 @@ sudo cp target/release/nds /usr/local/bin/
 ```
 
 
+## 🎬 Demo
+
+See NDS in action with key features:
+
+```bash
+$ nds new "web-server"
+Creating new session 'web-server'...
+⬢ user@host:~/project$ # ← Notice session indicator!
+
+$ nds list
+Active Sessions:
+ID       Name        Status    PID     Age
+a03fa0b6 web-server  running   84405   2m
+
+$ export NDS_PROMPT_STYLE=full
+[nds:web-server] user@host:~/project$ # ← Customizable indicators
+
+$ nds                # Interactive TUI mode
+┌─ NDS Session Manager ─────────────────┐
+│  > web-server   running   2m          │
+│    data-proc    running   1m          │
+│  [a]ttach [k]ill [q]uit               │
+└───────────────────────────────────────┘
+```
+
+> 🎥 **Interactive Demo Coming Soon**: Full asciinema recording showcasing all features
+
 ## 🚀 Quick Start
 
 ```bash
 # Create a new session
 nds new
 
-# List sessions
+# List sessions  
 nds list
 
 # Attach to a session
