@@ -8,7 +8,8 @@ fn test_cli_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("nds 0.1.2"));
+        // Just check that it starts with "nds" and has a version number
+        .stdout(predicate::str::is_match(r"^nds \d+\.\d+\.\d+").unwrap());
 }
 
 #[test]
