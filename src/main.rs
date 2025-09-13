@@ -122,4 +122,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
