@@ -34,28 +34,28 @@ enum Commands {
     /// Attach to an existing session
     #[command(aliases = &["a", "at"])]
     Attach {
-        /// Session ID to attach to (first 8 characters of UUID)
+        /// Session ID or name to attach to (supports partial matching)
         id: String,
     },
 
     /// Kill one or more sessions
     #[command(aliases = &["k"])]
     Kill {
-        /// Session IDs to kill
+        /// Session IDs or names to kill (supports partial matching)
         ids: Vec<String>,
     },
 
     /// Show information about a specific session
     #[command(aliases = &["i"])]
     Info {
-        /// Session ID to get info about
+        /// Session ID or name to get info about (supports partial matching)
         id: String,
     },
 
     /// Rename a session
     #[command(aliases = &["rn"])]
     Rename {
-        /// Session ID to rename
+        /// Session ID or name to rename (supports partial matching)
         id: String,
         /// New name for the session
         new_name: String,
@@ -67,7 +67,7 @@ enum Commands {
     /// Show session history
     #[command(aliases = &["h", "hist"])]
     History {
-        /// Show history for a specific session ID
+        /// Show history for a specific session ID or name (supports partial matching)
         #[arg(short, long)]
         session: Option<String>,
 
@@ -188,18 +188,36 @@ fn handle_list_sessions(interactive: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_attach_session(session_id: &str) -> Result<()> {
-    // Allow partial ID matching
+fn handle_attach_session(session_id_or_name: &str) -> Result<()> {
+    // Allow partial ID or name matching
     let sessions = SessionManager::list_sessions()?;
-    let matching_sessions: Vec<_> = sessions
+    
+    // First try to match by ID
+    let mut matching_sessions: Vec<_> = sessions
         .iter()
-        .filter(|s| s.id.starts_with(session_id))
+        .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
+    
+    // If no ID matches, try matching by name
+    if matching_sessions.is_empty() {
+        matching_sessions = sessions
+            .iter()
+            .filter(|s| {
+                if let Some(ref name) = s.name {
+                    name == session_id_or_name || 
+                    name.starts_with(session_id_or_name) ||
+                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                } else {
+                    false
+                }
+            })
+            .collect();
+    }
 
     match matching_sessions.len() {
         0 => {
-            eprintln!("No session found matching ID: {}", session_id);
-            Err(NdsError::SessionNotFound(session_id.to_string()))
+            eprintln!("No session found matching ID or name: {}", session_id_or_name);
+            Err(NdsError::SessionNotFound(session_id_or_name.to_string()))
         }
         1 => {
             let session = matching_sessions[0];
@@ -208,13 +226,13 @@ fn handle_attach_session(session_id: &str) -> Result<()> {
         }
         _ => {
             eprintln!(
-                "Multiple sessions match ID '{}'. Please be more specific:",
-                session_id
+                "Multiple sessions match '{}'. Please be more specific:",
+                session_id_or_name
             );
             for session in matching_sessions {
-                eprintln!("  - {}", session.id);
+                eprintln!("  - {}", session.display_name());
             }
-            Err(NdsError::InvalidSessionId(session_id.to_string()))
+            Err(NdsError::InvalidSessionId(session_id_or_name.to_string()))
         }
     }
 }
@@ -255,17 +273,33 @@ fn handle_kill_sessions(session_ids: &[String]) -> Result<()> {
     }
 }
 
-fn kill_single_session(session_id: &str, sessions: &[Session]) -> Result<String> {
-    // Allow partial ID matching
-    let matching_sessions: Vec<_> = sessions
+fn kill_single_session(session_id_or_name: &str, sessions: &[Session]) -> Result<String> {
+    // Allow partial ID or name matching
+    let mut matching_sessions: Vec<_> = sessions
         .iter()
-        .filter(|s| s.id.starts_with(session_id))
+        .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
+    
+    // If no ID matches, try matching by name
+    if matching_sessions.is_empty() {
+        matching_sessions = sessions
+            .iter()
+            .filter(|s| {
+                if let Some(ref name) = s.name {
+                    name == session_id_or_name || 
+                    name.starts_with(session_id_or_name) ||
+                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                } else {
+                    false
+                }
+            })
+            .collect();
+    }
 
     match matching_sessions.len() {
         0 => Err(NdsError::SessionNotFound(format!(
-            "No session found matching ID: {}",
-            session_id
+            "No session found matching ID or name: {}",
+            session_id_or_name
         ))),
         1 => {
             let session = matching_sessions[0];
@@ -273,32 +307,58 @@ fn kill_single_session(session_id: &str, sessions: &[Session]) -> Result<String>
             Ok(session.id.clone())
         }
         _ => {
-            let matches: Vec<String> = matching_sessions.iter().map(|s| s.id.clone()).collect();
+            let matches: Vec<String> = matching_sessions
+                .iter()
+                .map(|s| s.display_name())
+                .collect();
             Err(NdsError::SessionNotFound(format!(
                 "Multiple sessions match '{}': {}. Please be more specific",
-                session_id,
+                session_id_or_name,
                 matches.join(", ")
             )))
         }
     }
 }
 
-fn handle_session_info(session_id: &str) -> Result<()> {
-    // Allow partial ID matching
+fn handle_session_info(session_id_or_name: &str) -> Result<()> {
+    // Allow partial ID or name matching
     let sessions = SessionManager::list_sessions()?;
-    let matching_sessions: Vec<_> = sessions
+    
+    // First try to match by ID
+    let mut matching_sessions: Vec<_> = sessions
         .iter()
-        .filter(|s| s.id.starts_with(session_id))
+        .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
+    
+    // If no ID matches, try matching by name
+    if matching_sessions.is_empty() {
+        matching_sessions = sessions
+            .iter()
+            .filter(|s| {
+                if let Some(ref name) = s.name {
+                    name == session_id_or_name || 
+                    name.starts_with(session_id_or_name) ||
+                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                } else {
+                    false
+                }
+            })
+            .collect();
+    }
 
     match matching_sessions.len() {
         0 => {
-            eprintln!("No session found matching ID: {}", session_id);
-            Err(NdsError::SessionNotFound(session_id.to_string()))
+            eprintln!("No session found matching ID or name: {}", session_id_or_name);
+            Err(NdsError::SessionNotFound(session_id_or_name.to_string()))
         }
         1 => {
             let session = matching_sessions[0];
+            let client_count = session.get_client_count();
+            
             println!("Session ID: {}", session.id);
+            if let Some(ref name) = session.name {
+                println!("Session Name: {}", name);
+            }
             println!("PID: {}", session.pid);
             println!("Created: {}", session.created_at);
             println!("Socket: {}", session.socket_path.display());
@@ -306,55 +366,74 @@ fn handle_session_info(session_id: &str) -> Result<()> {
             println!("Working Directory: {}", session.working_dir);
             println!(
                 "Status: {}",
-                if session.attached {
-                    "Attached"
+                if client_count > 0 {
+                    format!("Attached ({} client(s))", client_count)
                 } else {
-                    "Detached"
+                    "Detached".to_string()
                 }
             );
             Ok(())
         }
         _ => {
             eprintln!(
-                "Multiple sessions match ID '{}'. Please be more specific:",
-                session_id
+                "Multiple sessions match '{}'. Please be more specific:",
+                session_id_or_name
             );
             for session in matching_sessions {
-                eprintln!("  - {}", session.id);
+                eprintln!("  - {}", session.display_name());
             }
-            Err(NdsError::InvalidSessionId(session_id.to_string()))
+            Err(NdsError::InvalidSessionId(session_id_or_name.to_string()))
         }
     }
 }
 
-fn handle_rename_session(session_id: &str, new_name: &str) -> Result<()> {
-    // Allow partial ID matching
+fn handle_rename_session(session_id_or_name: &str, new_name: &str) -> Result<()> {
+    // Allow partial ID or name matching
     let sessions = SessionManager::list_sessions()?;
-    let matching_sessions: Vec<_> = sessions
+    
+    // First try to match by ID
+    let mut matching_sessions: Vec<_> = sessions
         .iter()
-        .filter(|s| s.id.starts_with(session_id))
+        .filter(|s| s.id.starts_with(session_id_or_name))
         .collect();
+    
+    // If no ID matches, try matching by name
+    if matching_sessions.is_empty() {
+        matching_sessions = sessions
+            .iter()
+            .filter(|s| {
+                if let Some(ref name) = s.name {
+                    name == session_id_or_name || 
+                    name.starts_with(session_id_or_name) ||
+                    name.to_lowercase().starts_with(&session_id_or_name.to_lowercase())
+                } else {
+                    false
+                }
+            })
+            .collect();
+    }
 
     match matching_sessions.len() {
         0 => {
-            eprintln!("No session found matching ID: {}", session_id);
-            Err(NdsError::SessionNotFound(session_id.to_string()))
+            eprintln!("No session found matching ID or name: {}", session_id_or_name);
+            Err(NdsError::SessionNotFound(session_id_or_name.to_string()))
         }
         1 => {
             let session = matching_sessions[0];
+            let old_display_name = session.display_name();
             SessionManager::rename_session(&session.id, new_name)?;
-            println!("Renamed session {} to '{}'", session.id, new_name);
+            println!("Renamed session {} to '{}'", old_display_name, new_name);
             Ok(())
         }
         _ => {
             eprintln!(
-                "Multiple sessions match ID '{}'. Please be more specific:",
-                session_id
+                "Multiple sessions match '{}'. Please be more specific:",
+                session_id_or_name
             );
             for session in matching_sessions {
-                eprintln!("  - {}", session.id);
+                eprintln!("  - {}", session.display_name());
             }
-            Err(NdsError::InvalidSessionId(session_id.to_string()))
+            Err(NdsError::InvalidSessionId(session_id_or_name.to_string()))
         }
     }
 }
@@ -366,22 +445,56 @@ fn handle_clean_sessions() -> Result<()> {
     Ok(())
 }
 
-fn handle_session_history(session_id: Option<String>, all: bool, limit: usize) -> Result<()> {
+fn handle_session_history(session_id_or_name: Option<String>, all: bool, limit: usize) -> Result<()> {
     use chrono::{DateTime, Local};
 
     // Migrate old format if needed
     let _ = SessionHistory::migrate_from_single_file();
 
-    if let Some(ref id) = session_id {
+    if let Some(ref id_or_name) = session_id_or_name {
+        // First try to resolve session name to ID
+        let sessions = SessionManager::list_sessions()?;
+        let resolved_id = if sessions.iter().any(|s| s.id == *id_or_name) {
+            // It's already a session ID
+            id_or_name.clone()
+        } else {
+            // Try to find by name (case-insensitive partial matching)
+            let matches: Vec<&Session> = sessions
+                .iter()
+                .filter(|s| {
+                    if let Some(ref name) = s.name {
+                        name.to_lowercase().contains(&id_or_name.to_lowercase())
+                    } else {
+                        false
+                    }
+                })
+                .collect();
+
+            match matches.len() {
+                0 => {
+                    println!("No session found with ID or name matching: {}", id_or_name);
+                    return Ok(());
+                }
+                1 => matches[0].id.clone(),
+                _ => {
+                    println!("Multiple sessions match '{}'. Please be more specific:", id_or_name);
+                    for session in matches {
+                        println!("  {} [{}]", session.display_name(), session.id);
+                    }
+                    return Ok(());
+                }
+            }
+        };
+
         // Show history for specific session
-        let entries = SessionHistory::get_session_history(id)?;
+        let entries = SessionHistory::get_session_history(&resolved_id)?;
 
         if entries.is_empty() {
-            println!("No history found for session: {}", id);
+            println!("No history found for session: {}", resolved_id);
             return Ok(());
         }
 
-        println!("History for session {}:", id);
+        println!("History for session {}:", resolved_id);
         println!("{:-<80}", "");
 
         for entry in entries.iter().take(limit) {
