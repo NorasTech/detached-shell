@@ -12,6 +12,7 @@ use crate::pty_buffer::PtyBuffer;
 /// Handle reading from PTY master and broadcasting to clients
 pub struct PtyIoHandler {
     master_fd: RawFd,
+    #[allow(dead_code)]
     buffer_size: usize,
 }
 
@@ -54,6 +55,7 @@ impl PtyIoHandler {
 /// Handle scrollback buffer management
 pub struct ScrollbackHandler {
     buffer: Arc<Mutex<Vec<u8>>>,
+    #[allow(dead_code)]
     max_size: usize,
 }
 
@@ -66,6 +68,7 @@ impl ScrollbackHandler {
     }
 
     /// Add data to the scrollback buffer
+    #[allow(dead_code)]
     pub fn add_data(&self, data: &[u8]) {
         let mut buffer = self.buffer.lock().unwrap();
         buffer.extend_from_slice(data);

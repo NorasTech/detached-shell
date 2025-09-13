@@ -6,6 +6,9 @@ mod socket;
 mod spawn;
 mod terminal;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export main types for backward compatibility
 pub use spawn::PtyProcess;
 
