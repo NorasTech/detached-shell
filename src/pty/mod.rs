@@ -1,5 +1,6 @@
 // PTY process management module
 mod client;
+mod health_monitor;
 mod io_handler;
 mod session_switcher;
 mod socket;

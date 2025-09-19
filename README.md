@@ -286,6 +286,9 @@ chmod 700 ~/.nds/sockets
 ### Can't detach from session
 Make sure you're using the correct key sequence: press Enter first, then `~d` (similar to SSH's escape sequences).
 
+### Half screen or duplicated lines after attaching
+If you see only part of a full-screen app (like `htop`) or repeated prompt lines after reattaching, upgrade to the latest NDS build. Earlier versions flipped the client socket to non-blocking mode before replaying buffered output, dropping large frames and queuing failures. Recent releases send the backlog while still blocking, then queue any partial writes so slow terminals catch up cleanly.
+
 ## 📮 Support
 
 - 🐛 [Report bugs](https://github.com/NorasTech/detached-shell/issues)

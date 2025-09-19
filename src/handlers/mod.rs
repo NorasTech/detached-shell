@@ -1,4 +1,5 @@
 // Module declarations
+pub mod clients;
 pub mod info;
 pub mod session;
 
@@ -11,4 +12,5 @@ pub use session::{
     handle_rename_session,
 };
 
+pub use clients::{handle_disconnect_client, handle_list_clients};
 pub use info::{handle_list_sessions, handle_session_history, handle_session_info};

@@ -80,6 +80,32 @@ enum Commands {
         #[arg(short, long, default_value = "50")]
         limit: usize,
     },
+
+    /// Manage clients connected to sessions
+    #[command(aliases = &["c", "client"])]
+    Clients {
+        #[command(subcommand)]
+        command: ClientCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClientCommands {
+    /// List clients connected to a session
+    #[command(aliases = &["ls", "l"])]
+    List {
+        /// Session ID or name (supports partial matching)
+        session: String,
+    },
+
+    /// Disconnect a specific client from a session
+    #[command(aliases = &["d", "kick"])]
+    Disconnect {
+        /// Session ID or name (supports partial matching)
+        session: String,
+        /// Client ID to disconnect (use 'clients list' to see IDs)
+        client_id: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -114,6 +140,14 @@ fn main() -> Result<()> {
         }) => {
             handlers::handle_session_history(session, all, limit)?;
         }
+        Some(Commands::Clients { command }) => match command {
+            ClientCommands::List { session } => {
+                handlers::handle_list_clients(&session)?;
+            }
+            ClientCommands::Disconnect { session, client_id } => {
+                handlers::handle_disconnect_client(&session, &client_id)?;
+            }
+        },
         None => {
             // Default action: interactive session picker
             handlers::handle_list_sessions(true)?;

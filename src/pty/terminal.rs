@@ -57,6 +57,25 @@ pub fn restore_terminal(stdin_fd: RawFd, original: &Termios) -> Result<()> {
     // Ensure we're back in cooked mode
     terminal::disable_raw_mode().ok();
 
+    // Send comprehensive terminal reset sequences to stdout (not socket)
+    let reset_sequences = [
+        "\x1b[m",      // Reset all attributes
+        "\x1b[?1000l", // Disable mouse tracking
+        "\x1b[?1002l", // Disable cell motion mouse tracking
+        "\x1b[?1003l", // Disable all motion mouse tracking
+        "\x1b[?1006l", // Disable SGR mouse mode
+        "\x1b[?1015l", // Disable urxvt mouse mode
+        "\x1b[?1049l", // Exit alternate screen buffer
+        "\x1b[?47l",   // Exit alternate screen buffer (legacy)
+        "\x1b[?1l",    // Return to normal cursor key mode
+        "\x1b[?7h",    // Enable auto-wrap
+        "\x1b[?25h",   // Ensure cursor is visible
+        "\x1b[0;0r",   // Reset scroll region
+    ]
+    .join("");
+    let _ = io::stdout().write_all(reset_sequences.as_bytes());
+    let _ = io::stdout().flush();
+
     // Clear any remaining input after terminal restore
     tcflush(&stdin, FlushArg::TCIFLUSH).map_err(|e| {
         NdsError::TerminalError(format!("Failed to flush stdin after restore: {}", e))
@@ -92,12 +111,33 @@ pub fn set_terminal_size(fd: RawFd, cols: u16, rows: u16) -> Result<()> {
 }
 
 /// Set stdin to non-blocking mode
+#[allow(dead_code)]
 pub fn set_stdin_nonblocking(stdin_fd: RawFd) -> Result<()> {
     unsafe {
         let flags = libc::fcntl(stdin_fd, libc::F_GETFL);
         if libc::fcntl(stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
             return Err(NdsError::TerminalError(
                 "Failed to set stdin non-blocking".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reset stdin to blocking mode
+pub fn set_stdin_blocking(stdin_fd: RawFd) -> Result<()> {
+    unsafe {
+        let flags = libc::fcntl(stdin_fd, libc::F_GETFL);
+        if flags < 0 {
+            return Err(NdsError::TerminalError(
+                "Failed to get stdin flags".to_string(),
+            ));
+        }
+        // Clear the O_NONBLOCK flag
+        let new_flags = flags & !libc::O_NONBLOCK;
+        if libc::fcntl(stdin_fd, libc::F_SETFL, new_flags) < 0 {
+            return Err(NdsError::TerminalError(
+                "Failed to set stdin blocking".to_string(),
             ));
         }
     }
@@ -113,14 +153,10 @@ pub fn send_refresh(stream: &mut impl Write) -> io::Result<()> {
 
 /// Send terminal refresh sequences to restore normal state
 pub fn send_terminal_refresh_sequences(stream: &mut impl Write) -> io::Result<()> {
+    // Send minimal refresh sequences without modifying cursor
     let refresh_sequences = [
-        "\x1b[?25h",   // Show cursor
-        "\x1b[?12h",   // Enable cursor blinking
-        "\x1b[1 q",    // Blinking block cursor (default)
-        "\x1b[m",      // Reset all attributes
-        "\x1b[?1000l", // Disable mouse tracking (if enabled)
-        "\x1b[?1002l", // Disable cell motion mouse tracking
-        "\x1b[?1003l", // Disable all motion mouse tracking
+        "\x1b[m", // Reset all attributes
+        "\x0c",   // Form feed (clear screen)
     ]
     .join("");
 

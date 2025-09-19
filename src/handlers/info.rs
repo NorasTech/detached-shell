@@ -21,6 +21,10 @@ pub fn handle_list_sessions(interactive: bool) -> Result<()> {
                     None => {
                         // User quit without selecting
                         println!("No session selected.");
+                        // Ensure terminal is clean
+                        let _ = std::io::Write::flush(&mut std::io::stdout());
+                        // Small delay to ensure output completes before exit
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                 }
             }

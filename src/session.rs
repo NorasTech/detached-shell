@@ -138,6 +138,7 @@ impl Session {
     pub fn list_all() -> Result<Vec<Session>> {
         let dir = Self::session_dir()?;
         let mut sessions = Vec::new();
+        let mut cleaned_count = 0;
 
         if dir.exists() {
             for entry in fs::read_dir(dir)? {
@@ -147,21 +148,45 @@ impl Session {
                 if path.extension().and_then(|s| s.to_str()) == Some("json") {
                     let content = fs::read_to_string(&path)?;
                     if let Ok(session) = serde_json::from_str::<Session>(&content) {
-                        // Only include sessions with live processes
-                        if Self::is_process_alive(session.pid) {
+                        // Check both process and socket health
+                        let process_alive = Self::is_process_alive(session.pid);
+                        let socket_healthy = session.socket_path.exists()
+                            && Self::is_socket_healthy(&session.socket_path);
+
+                        if process_alive && socket_healthy {
                             sessions.push(session);
                         } else {
-                            // Clean up dead session
-                            let _ = fs::remove_file(&path);
+                            // Clean up dead session completely
+                            let _ = Self::cleanup(&session.id);
+                            cleaned_count += 1;
                         }
                     }
                 }
             }
         }
 
+        if cleaned_count > 0 {
+            eprintln!("Auto-cleaned {} dead session(s)", cleaned_count);
+        }
+
         // Sort by creation time
         sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         Ok(sessions)
+    }
+
+    /// Check if a socket is healthy by attempting to connect
+    fn is_socket_healthy(socket_path: &PathBuf) -> bool {
+        use std::time::Duration;
+
+        match UnixStream::connect(socket_path) {
+            Ok(socket) => {
+                // Set a very short timeout for the health check
+                let _ = socket.set_read_timeout(Some(Duration::from_millis(50)));
+                let _ = socket.set_write_timeout(Some(Duration::from_millis(50)));
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn cleanup(id: &str) -> Result<()> {
@@ -199,9 +224,51 @@ impl Session {
     }
 
     pub fn connect_socket(&self) -> Result<UnixStream> {
-        UnixStream::connect(&self.socket_path).map_err(|e| {
-            NdsError::SocketError(format!("Failed to connect to session socket: {}", e))
-        })
+        use std::time::Duration;
+
+        // Check if socket file exists first
+        if !self.socket_path.exists() {
+            return Err(NdsError::SocketError(format!(
+                "Session socket does not exist: {}",
+                self.socket_path.display()
+            )));
+        }
+
+        // Try to connect with a timeout
+        match UnixStream::connect(&self.socket_path) {
+            Ok(socket) => {
+                // Set socket timeout to prevent hanging
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .map_err(|e| {
+                        NdsError::SocketError(format!("Failed to set socket timeout: {}", e))
+                    })?;
+                socket
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .map_err(|e| {
+                        NdsError::SocketError(format!("Failed to set socket timeout: {}", e))
+                    })?;
+                Ok(socket)
+            }
+            Err(e) => {
+                // Check if it's a connection refused or broken pipe
+                match e.kind() {
+                    std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::NotFound => {
+                        // Session might be dead, try to clean up
+                        Err(NdsError::SessionNotFound(format!(
+                            "Session {} appears to be dead or unreachable: {}",
+                            self.id, e
+                        )))
+                    }
+                    _ => Err(NdsError::SocketError(format!(
+                        "Failed to connect to session socket: {}",
+                        e
+                    ))),
+                }
+            }
+        }
     }
 
     pub fn get_client_count(&self) -> usize {

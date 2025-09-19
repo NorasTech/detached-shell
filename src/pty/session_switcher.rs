@@ -37,80 +37,82 @@ impl<'a> SessionSwitcher<'a> {
 
     /// Show the session switcher interface and handle user selection
     pub fn show_switcher(&self) -> Result<SwitchResult> {
-        println!("\r\n[Session Switcher]\r");
+        // Clear screen and show simple picker
+        print!("\x1b[2J\x1b[H"); // Clear screen
+        println!("\r\n╔══════════════════════════════════════╗\r");
+        println!("\r║         SESSION SWITCHER             ║\r");
+        println!("\r╚══════════════════════════════════════╝\r");
 
-        // Get list of other sessions
+        // Get sessions excluding current
         let sessions = SessionManager::list_sessions()?;
         let other_sessions: Vec<_> = sessions
             .iter()
             .filter(|s| s.id != self.current_session.id)
             .collect();
 
-        // Show available sessions
-        println!("\r\nAvailable options:\r");
+        // Show current session
+        println!(
+            "\r\nCurrent: {} [{}]\r",
+            self.current_session.display_name(),
+            &self.current_session.id[..8]
+        );
+        println!("\r\n─────────────────────────────────────────\r");
 
-        // Show existing sessions
+        // Show available sessions
         if !other_sessions.is_empty() {
-            for (i, s) in other_sessions.iter().enumerate() {
-                println!("\r  {}. {} (PID: {})\r", i + 1, s.display_name(), s.pid);
+            println!("\r\nOther Sessions:\r");
+            for (i, session) in other_sessions.iter().enumerate() {
+                let client_count = session.get_client_count();
+                let status = if client_count > 0 { "●" } else { "○" };
+                println!(
+                    "\r  [{}] {} {} {}\r",
+                    i + 1,
+                    status,
+                    session.display_name(),
+                    format!("[{}]", &session.id[..8])
+                );
             }
         }
 
-        // Add new session option
-        let new_option_num = other_sessions.len() + 1;
-        println!("\r  {}. [New Session]\r", new_option_num);
-        println!("\r  0. Cancel\r");
-        println!("\r\nSelect option (0-{}): ", new_option_num);
+        // Add options
+        let new_option = other_sessions.len() + 1;
+        println!("\r  [{}] ➕ Create New Session\r", new_option);
+        println!("\r  [0] Cancel\r");
+        println!("\r\n─────────────────────────────────────────\r");
+        print!("\r\nSelect [0-{}]: ", new_option);
         let _ = io::stdout().flush();
 
-        // Read user selection with temporary cooked mode
+        // Read selection
         let selection = self.read_user_input()?;
-
         if let Ok(num) = selection.trim().parse::<usize>() {
             if num > 0 && num <= other_sessions.len() {
-                // Switch to selected session
-                let target_session = other_sessions[num - 1];
-                println!("\r\n[Switching to session {}]\r", target_session.id);
-                return Ok(SwitchResult::SwitchTo(target_session.id.clone()));
-            } else if num == new_option_num {
-                // Create new session
+                let target = other_sessions[num - 1];
+                println!("\r\n✓ Switching to: {}\r", target.display_name());
+                return Ok(SwitchResult::SwitchTo(target.id.clone()));
+            } else if num == new_option {
                 return self.handle_new_session();
             }
         }
 
-        // Cancelled or invalid selection
         println!("\r\n[Continuing current session]\r");
         Ok(SwitchResult::Continue)
     }
 
     /// Handle creating a new session
     fn handle_new_session(&self) -> Result<SwitchResult> {
-        println!("\r\nEnter name for new session (or press Enter for no name): ");
+        print!("\r\nEnter session name (or Enter for no name): ");
         let _ = io::stdout().flush();
 
-        let session_name = self.read_user_input()?;
-        let session_name = session_name.trim();
-
-        let name = if session_name.is_empty() {
+        let name_input = self.read_user_input()?;
+        let name = if name_input.trim().is_empty() {
             None
         } else {
-            Some(session_name.to_string())
+            Some(name_input.trim().to_string())
         };
 
-        // Create new session
         match SessionManager::create_session_with_name(name.clone()) {
             Ok(new_session) => {
-                if let Some(ref n) = name {
-                    println!(
-                        "\r\n[Created and switching to new session '{}' ({})]",
-                        n, new_session.id
-                    );
-                } else {
-                    println!(
-                        "\r\n[Created and switching to new session {}]",
-                        new_session.id
-                    );
-                }
+                println!("\r\n✓ Created session: {}\r", new_session.display_name());
                 Ok(SwitchResult::SwitchTo(new_session.id))
             }
             Err(e) => {
@@ -120,36 +122,42 @@ impl<'a> SessionSwitcher<'a> {
         }
     }
 
-    /// Read user input with temporary cooked mode
+    /// Read user input in cooked mode
     fn read_user_input(&self) -> Result<String> {
         let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(self.stdin_fd) };
 
-        // Save current raw mode settings
+        // Save current settings
         let current_termios = tcgetattr(&stdin_borrowed)?;
 
-        // Restore to original (cooked) mode for line input
-        tcsetattr(&stdin_borrowed, SetArg::TCSANOW, self.original_termios)?;
+        // Restore to cooked mode
+        tcsetattr(&stdin_borrowed, SetArg::TCSAFLUSH, self.original_termios)?;
 
-        // Read user input
+        // Set blocking mode
+        unsafe {
+            let flags = libc::fcntl(self.stdin_fd, libc::F_GETFL);
+            if flags >= 0 {
+                let _ = libc::fcntl(self.stdin_fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+            }
+        }
+
+        // Read line
         let stdin = io::stdin();
         let mut buffer = String::new();
-        let read_result = stdin.lock().read_line(&mut buffer);
+        let mut stdin_lock = stdin.lock();
+        let result = stdin_lock.read_line(&mut buffer);
+
+        // Restore non-blocking if needed
+        unsafe {
+            let flags = libc::fcntl(self.stdin_fd, libc::F_GETFL);
+            if flags >= 0 {
+                let _ = libc::fcntl(self.stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
+        }
 
         // Restore raw mode
         tcsetattr(&stdin_borrowed, SetArg::TCSANOW, &current_termios)?;
 
-        read_result.map_err(|e| NdsError::Io(e))?;
+        result.map_err(|e| NdsError::Io(e))?;
         Ok(buffer)
     }
-}
-
-/// Show the session help message
-#[allow(dead_code)]
-pub fn show_session_help() {
-    println!("\r\n[Session Commands]\r");
-    println!("\r  ~d - Detach from current session\r");
-    println!("\r  ~s - Switch sessions\r");
-    println!("\r  ~h - Show scrollback history\r");
-    println!("\r  ~~ - Send literal tilde\r");
-    println!("\r\n[Press any key to continue]\r");
 }

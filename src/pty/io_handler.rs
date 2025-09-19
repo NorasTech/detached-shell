@@ -1,6 +1,5 @@
-use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -31,19 +30,56 @@ impl PtyIoHandler {
 
     /// Read from PTY master file descriptor
     pub fn read_from_pty(&self, buffer: &mut [u8]) -> io::Result<usize> {
-        let master_file = unsafe { File::from_raw_fd(self.master_fd) };
-        let mut master_file_clone = master_file.try_clone()?;
-        std::mem::forget(master_file); // Don't close the fd
+        // Use direct syscall to avoid file descriptor issues
+        unsafe {
+            let result = libc::read(
+                self.master_fd,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                buffer.len(),
+            );
 
-        master_file_clone.read(buffer)
+            if result < 0 {
+                let err = io::Error::last_os_error();
+                // Check if it's a recoverable error
+                if err.kind() == io::ErrorKind::WouldBlock
+                    || err.kind() == io::ErrorKind::Interrupted
+                {
+                    return Err(err);
+                }
+                // For other errors, still return them but log for debugging
+                return Err(err);
+            }
+
+            Ok(result as usize)
+        }
     }
 
     /// Write to PTY master file descriptor
     pub fn write_to_pty(&self, data: &[u8]) -> io::Result<()> {
-        let mut master_file = unsafe { File::from_raw_fd(self.master_fd) };
-        let result = master_file.write_all(data);
-        std::mem::forget(master_file); // Don't close the fd
-        result
+        // Use direct syscall to avoid file descriptor issues
+        let mut written = 0;
+        while written < data.len() {
+            unsafe {
+                let result = libc::write(
+                    self.master_fd,
+                    data[written..].as_ptr() as *const libc::c_void,
+                    data.len() - written,
+                );
+
+                if result < 0 {
+                    let err = io::Error::last_os_error();
+                    // Retry on interrupted system call
+                    if err.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    // Return error for non-recoverable errors
+                    return Err(err);
+                }
+
+                written += result as usize;
+            }
+        }
+        Ok(())
     }
 
     /// Send a control character to the PTY
@@ -101,22 +137,59 @@ pub fn spawn_socket_to_stdout_thread(
     mut socket: std::os::unix::net::UnixStream,
     running: Arc<AtomicBool>,
     scrollback: Arc<Mutex<Vec<u8>>>,
+    paused: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut stdout = io::stdout();
         let mut buffer = [0u8; DEFAULT_BUFFER_SIZE]; // Use 16KB buffer
+        let mut held_buffer = Vec::new(); // Buffer to hold data while paused
 
         while running.load(Ordering::SeqCst) {
+            // If paused, just sleep and continue
+            if paused.load(Ordering::SeqCst) {
+                // Still read from socket to prevent blocking, but buffer it
+                match socket.read(&mut buffer) {
+                    Ok(0) => break, // Socket closed
+                    Ok(n) => {
+                        // Hold the data while paused
+                        held_buffer.extend_from_slice(&buffer[..n]);
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+                continue;
+            }
+
+            // If we have held data and we're no longer paused, flush it
+            if !held_buffer.is_empty() {
+                if stdout.write_all(&held_buffer).is_err() {
+                    break;
+                }
+                let _ = stdout.flush();
+
+                // Add to scrollback
+                let mut scrollback = scrollback.lock().unwrap();
+                scrollback.extend_from_slice(&held_buffer);
+                held_buffer.clear();
+            }
+
             match socket.read(&mut buffer) {
                 Ok(0) => break, // Socket closed
                 Ok(n) => {
-                    // Write to stdout
-                    if stdout.write_all(&buffer[..n]).is_err() {
-                        break;
+                    // Write to stdout only if not paused
+                    if !paused.load(Ordering::SeqCst) {
+                        if stdout.write_all(&buffer[..n]).is_err() {
+                            break;
+                        }
+                        let _ = stdout.flush();
+                    } else {
+                        // If paused mid-read, buffer it
+                        held_buffer.extend_from_slice(&buffer[..n]);
                     }
-                    let _ = stdout.flush();
 
-                    // Add to scrollback buffer
+                    // Always add to scrollback buffer
                     let mut scrollback = scrollback.lock().unwrap();
                     scrollback.extend_from_slice(&buffer[..n]);
 
@@ -147,13 +220,13 @@ pub fn spawn_resize_monitor_thread(
     initial_size: (u16, u16),
 ) -> thread::JoinHandle<()> {
     use crate::pty::socket::send_resize_command;
-    use crossterm::terminal;
+    use crate::pty::terminal::get_terminal_size;
 
     thread::spawn(move || {
         let mut last_size = initial_size;
 
         while running.load(Ordering::SeqCst) {
-            if let Ok((new_cols, new_rows)) = terminal::size() {
+            if let Ok((new_cols, new_rows)) = get_terminal_size() {
                 if (new_cols, new_rows) != last_size {
                     // Terminal size changed, send resize command
                     let _ = send_resize_command(&mut socket, new_cols, new_rows);
@@ -165,6 +238,7 @@ pub fn spawn_resize_monitor_thread(
     })
 }
 
+#[allow(dead_code)]
 /// Helper to send buffered output to a new client
 pub fn send_buffered_output(
     stream: &mut std::os::unix::net::UnixStream,
@@ -175,31 +249,19 @@ pub fn send_buffered_output(
         let mut buffered_data = Vec::new();
         output_buffer.drain_to(&mut buffered_data);
 
-        // Save cursor position, clear screen, and reset
-        let init_sequence = b"\x1b7\x1b[?47h\x1b[2J\x1b[H"; // Save cursor, alt screen, clear, home
-        stream.write_all(init_sequence)?;
-        stream.flush()?;
-
-        // Send buffered data in chunks to avoid overwhelming the client
+        // Don't use alternate screen or clear - it destroys the session state
+        // Just send the buffered output directly
         for chunk in buffered_data.chunks(DEFAULT_BUFFER_SIZE) {
             stream.write_all(chunk)?;
             stream.flush()?;
             thread::sleep(Duration::from_millis(1));
         }
 
-        // Exit alt screen and restore cursor
-        let restore_sequence = b"\x1b[?47l\x1b8"; // Exit alt screen, restore cursor
-        stream.write_all(restore_sequence)?;
-        stream.flush()?;
+        // Send a refresh to sync the display
+        io_handler.send_refresh()?;
 
         // Small delay for terminal to process
         thread::sleep(Duration::from_millis(50));
-
-        // Send a full redraw command to the shell
-        io_handler.send_refresh()?;
-
-        // Give time for the refresh to complete
-        thread::sleep(Duration::from_millis(100));
     } else {
         // No buffer, just request a refresh to sync state
         io_handler.send_refresh()?;
