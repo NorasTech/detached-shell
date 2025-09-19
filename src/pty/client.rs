@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn send_data_buffers_when_socket_would_block() -> Result<()> {
-        let (mut writer, mut reader) = UnixStream::pair()?;
+        let (writer, mut reader) = UnixStream::pair()?;
         writer.set_nonblocking(true)?;
 
         let mut client = ClientInfo::new(writer);
