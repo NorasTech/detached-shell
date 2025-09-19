@@ -153,10 +153,17 @@ pub fn send_refresh(stream: &mut impl Write) -> io::Result<()> {
 
 /// Send terminal refresh sequences to restore normal state
 pub fn send_terminal_refresh_sequences(stream: &mut impl Write) -> io::Result<()> {
-    // Send minimal refresh sequences without modifying cursor
+    // Send refresh sequences to restore standard terminal state after TUIs
     let refresh_sequences = [
-        "\x1b[m", // Reset all attributes
-        "\x0c",   // Form feed (clear screen)
+        "\x1b[m",      // Reset all attributes
+        "\x1b[?25h",   // Ensure cursor is visible
+        "\x1b[?7h",    // Enable auto-wrap
+        "\x1b[?1000l", // Disable mouse tracking
+        "\x1b[?1002l", // Disable cell motion mouse tracking
+        "\x1b[?1003l", // Disable all motion mouse tracking
+        "\x1b[?2004l", // Disable bracketed paste
+        "\x1b[0;0r",   // Reset scroll region
+        "\x0c",        // Clear screen
     ]
     .join("");
 
